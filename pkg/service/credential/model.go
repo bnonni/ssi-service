@@ -4,10 +4,6 @@ import (
 	"github.com/tbd54566975/ssi-service/internal/credential"
 )
 
-const (
-	SchemaLDType string = "JsonSchemaValidator2018"
-)
-
 type CreateCredentialRequest struct {
 	Issuer    string `json:"issuer" validate:"required"`
 	IssuerKID string `json:"issuerKid" validate:"required"`
@@ -20,7 +16,7 @@ type CreateCredentialRequest struct {
 	Expiry      string         `json:"expiry,omitempty"`
 	Revocable   bool           `json:"revocable,omitempty"`
 	Suspendable bool           `json:"suspendable,omitempty"`
-	// TODO(gabe) support more capabilities like signature type, format, status, and more.
+	// TODO(gabe) support more capabilities like signature type, format, evidence, and more.
 }
 
 // CreateCredentialResponse holds a resulting credential from credential creation, which is an XOR type:
@@ -37,19 +33,19 @@ type GetCredentialResponse struct {
 	credential.Container `json:"credential,omitempty"`
 }
 
-type GetCredentialByIssuerRequest struct {
+type ListCredentialByIssuerRequest struct {
 	Issuer string `json:"issuer" validate:"required"`
 }
 
-type GetCredentialBySubjectRequest struct {
+type ListCredentialBySubjectRequest struct {
 	Subject string `json:"subject" validate:"required"`
 }
 
-type GetCredentialBySchemaRequest struct {
+type ListCredentialBySchemaRequest struct {
 	Schema string `json:"schema" validate:"required"`
 }
 
-type GetCredentialsResponse struct {
+type ListCredentialsResponse struct {
 	Credentials []credential.Container `json:"credentials,omitempty"`
 }
 

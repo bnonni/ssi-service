@@ -12,6 +12,20 @@ import (
 
 var didIONContext = NewTestContext("DIDION")
 
+func TestResolveIONDIDIntegration(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test")
+	}
+
+	resolveOutput, err := ResolveDID("did:ion:EiD3DIbDgBCajj2zCkE48x74FKTV9_Dcu1u_imzZddDKfg")
+	assert.NoError(t, err)
+	assert.NotEmpty(t, resolveOutput)
+
+	ionDID, err := getJSONElement(resolveOutput, "$.didDocument.id")
+	assert.NoError(t, err)
+	assert.Equal(t, "did:ion:EiD3DIbDgBCajj2zCkE48x74FKTV9_Dcu1u_imzZddDKfg", ionDID)
+}
+
 func TestCreateIssuerDIDIONIntegration(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test")
@@ -92,7 +106,7 @@ func TestDIDIONCreateVerifiableCredentialIntegration(t *testing.T) {
 		IssuerKID: issuerKID.(string),
 		SchemaID:  schemaID.(string),
 		SubjectID: issuerDID.(string),
-	}, false)
+	})
 	assert.NoError(t, err)
 	assert.NotEmpty(t, vcOutput)
 

@@ -24,7 +24,6 @@ import (
 )
 
 func TestCredentialRouter(t *testing.T) {
-
 	t.Run("Nil Service", func(tt *testing.T) {
 		credRouter, err := NewCredentialRouter(nil)
 		assert.Error(tt, err)
@@ -41,7 +40,7 @@ func TestCredentialRouter(t *testing.T) {
 
 	t.Run("Credential Service Test", func(tt *testing.T) {
 		bolt := setupTestDB(tt)
-		assert.NotNil(tt, bolt)
+		assert.NotEmpty(tt, bolt)
 
 		serviceConfig := config.CredentialServiceConfig{BaseServiceConfig: &config.BaseServiceConfig{Name: "credential"}}
 		keyStoreService := testKeyStoreService(tt, bolt)
@@ -104,13 +103,13 @@ func TestCredentialRouter(t *testing.T) {
 		assert.Contains(tt, err.Error(), "credential not found with id: bad")
 
 		// get by schema - no schema
-		bySchema, err := credService.GetCredentialsBySchema(context.Background(), credential.GetCredentialBySchemaRequest{Schema: ""})
+		bySchema, err := credService.ListCredentialsBySchema(context.Background(), credential.ListCredentialBySchemaRequest{Schema: ""})
 		assert.NoError(tt, err)
 		assert.Len(tt, bySchema.Credentials, 1)
 		assert.EqualValues(tt, cred.CredentialSchema, bySchema.Credentials[0].Credential.CredentialSchema)
 
 		// get by subject
-		bySubject, err := credService.GetCredentialsBySubject(context.Background(), credential.GetCredentialBySubjectRequest{Subject: subject})
+		bySubject, err := credService.ListCredentialsBySubject(context.Background(), credential.ListCredentialBySubjectRequest{Subject: subject})
 		assert.NoError(tt, err)
 		assert.Len(tt, bySubject.Credentials, 1)
 
@@ -118,7 +117,7 @@ func TestCredentialRouter(t *testing.T) {
 		assert.Equal(tt, cred.CredentialSubject[credsdk.VerifiableCredentialIDProperty], bySubject.Credentials[0].Credential.CredentialSubject[credsdk.VerifiableCredentialIDProperty])
 
 		// get by issuer
-		byIssuer, err := credService.GetCredentialsByIssuer(context.Background(), credential.GetCredentialByIssuerRequest{Issuer: issuer})
+		byIssuer, err := credService.ListCredentialsByIssuer(context.Background(), credential.ListCredentialByIssuerRequest{Issuer: issuer})
 		assert.NoError(tt, err)
 		assert.Len(tt, byIssuer.Credentials, 1)
 
@@ -140,17 +139,7 @@ func TestCredentialRouter(t *testing.T) {
 		assert.Contains(tt, err.Error(), "schema not found with id: https://test-schema.com")
 
 		// create schema
-		emailSchema := map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"email": map[string]any{
-					"type": "string",
-				},
-			},
-			"required":             []any{"email"},
-			"additionalProperties": false,
-		}
-		createdSchema, err := schemaService.CreateSchema(context.Background(), schema.CreateSchemaRequest{Author: issuerDID.DID.ID, Name: "simple schema", Schema: emailSchema})
+		createdSchema, err := schemaService.CreateSchema(context.Background(), schema.CreateSchemaRequest{Issuer: issuerDID.DID.ID, Name: "simple schema", Schema: getEmailSchema()})
 		assert.NoError(tt, err)
 		assert.NotEmpty(tt, createdSchema)
 
@@ -169,19 +158,19 @@ func TestCredentialRouter(t *testing.T) {
 		assert.NotEmpty(tt, createdCredWithSchema)
 
 		// get by issuer
-		byIssuer, err = credService.GetCredentialsByIssuer(context.Background(), credential.GetCredentialByIssuerRequest{Issuer: issuer})
+		byIssuer, err = credService.ListCredentialsByIssuer(context.Background(), credential.ListCredentialByIssuerRequest{Issuer: issuer})
 		assert.NoError(tt, err)
 		assert.Len(tt, byIssuer.Credentials, 2)
 
 		// make sure the schema and subject queries are consistent
-		bySchema, err = credService.GetCredentialsBySchema(context.Background(), credential.GetCredentialBySchemaRequest{Schema: ""})
+		bySchema, err = credService.ListCredentialsBySchema(context.Background(), credential.ListCredentialBySchemaRequest{Schema: ""})
 		assert.NoError(tt, err)
 		assert.Len(tt, bySchema.Credentials, 1)
 
 		assert.Equal(tt, cred.ID, bySchema.Credentials[0].ID)
 		assert.EqualValues(tt, cred.CredentialSchema, bySchema.Credentials[0].Credential.CredentialSchema)
 
-		bySubject, err = credService.GetCredentialsBySubject(context.Background(), credential.GetCredentialBySubjectRequest{Subject: subject})
+		bySubject, err = credService.ListCredentialsBySubject(context.Background(), credential.ListCredentialBySubjectRequest{Subject: subject})
 		assert.NoError(tt, err)
 		assert.Len(tt, bySubject.Credentials, 1)
 
@@ -204,9 +193,9 @@ func TestCredentialRouter(t *testing.T) {
 
 	t.Run("Credential Status List Test", func(tt *testing.T) {
 		bolt := setupTestDB(tt)
-		assert.NotNil(tt, bolt)
+		assert.NotEmpty(tt, bolt)
 
-		serviceConfig := config.CredentialServiceConfig{BaseServiceConfig: &config.BaseServiceConfig{Name: "credential"}}
+		serviceConfig := config.CredentialServiceConfig{BaseServiceConfig: &config.BaseServiceConfig{Name: "credential", ServiceEndpoint: "v1/credentials"}}
 		keyStoreService := testKeyStoreService(tt, bolt)
 		didService := testDIDService(tt, bolt, keyStoreService)
 		schemaService := testSchemaService(tt, bolt, keyStoreService, didService)
@@ -224,18 +213,7 @@ func TestCredentialRouter(t *testing.T) {
 		assert.NotEmpty(tt, issuerDID)
 
 		// create a schema
-		emailSchema := map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"email": map[string]any{
-					"type": "string",
-				},
-			},
-			"required":             []any{"email"},
-			"additionalProperties": false,
-		}
-
-		createdSchema, err := schemaService.CreateSchema(context.Background(), schema.CreateSchemaRequest{Author: issuerDID.DID.ID, Name: "simple schema", Schema: emailSchema})
+		createdSchema, err := schemaService.CreateSchema(context.Background(), schema.CreateSchemaRequest{Issuer: issuerDID.DID.ID, Name: "simple schema", Schema: getEmailSchema()})
 		assert.NoError(tt, err)
 		assert.NotEmpty(tt, createdSchema)
 
@@ -291,7 +269,7 @@ func TestCredentialRouter(t *testing.T) {
 		// Cred with same <issuer, schema> pair share the same statusListCredential
 		assert.Equal(tt, credStatusMapTwo["statusListCredential"], credStatusMap["statusListCredential"])
 
-		createdSchemaTwo, err := schemaService.CreateSchema(context.Background(), schema.CreateSchemaRequest{Author: issuerDID.DID.ID, Name: "simple schema", Schema: emailSchema})
+		createdSchemaTwo, err := schemaService.CreateSchema(context.Background(), schema.CreateSchemaRequest{Issuer: issuerDID.DID.ID, Name: "simple schema", Schema: getEmailSchema()})
 		assert.NoError(tt, err)
 		assert.NotEmpty(tt, createdSchemaTwo)
 
@@ -324,9 +302,9 @@ func TestCredentialRouter(t *testing.T) {
 
 	t.Run("Credential Status List Test No Schemas", func(tt *testing.T) {
 		bolt := setupTestDB(tt)
-		assert.NotNil(tt, bolt)
+		assert.NotEmpty(tt, bolt)
 
-		serviceConfig := config.CredentialServiceConfig{BaseServiceConfig: &config.BaseServiceConfig{Name: "credential"}}
+		serviceConfig := config.CredentialServiceConfig{BaseServiceConfig: &config.BaseServiceConfig{Name: "credential", ServiceEndpoint: "/v1/credentials"}}
 		keyStoreService := testKeyStoreService(tt, bolt)
 		didService := testDIDService(tt, bolt, keyStoreService)
 		schemaService := testSchemaService(tt, bolt, keyStoreService, didService)
@@ -394,18 +372,8 @@ func TestCredentialRouter(t *testing.T) {
 		// Cred with same <issuer, schema> pair share the same statusListCredential
 		assert.Equal(tt, credStatusMapTwo["statusListCredential"], credStatusMap["statusListCredential"])
 
-		emailSchema := map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"email": map[string]any{
-					"type": "string",
-				},
-			},
-			"required":             []any{"email"},
-			"additionalProperties": false,
-		}
-
-		createdSchema, err := schemaService.CreateSchema(context.Background(), schema.CreateSchemaRequest{Author: issuerDID.DID.ID, Name: "simple schema", Schema: emailSchema})
+		// create schema
+		createdSchema, err := schemaService.CreateSchema(context.Background(), schema.CreateSchemaRequest{Issuer: issuerDID.DID.ID, Name: "simple schema", Schema: getEmailSchema()})
 		assert.NoError(tt, err)
 		assert.NotEmpty(tt, createdSchema)
 
@@ -438,9 +406,9 @@ func TestCredentialRouter(t *testing.T) {
 
 	t.Run("Credential Status List Test Update Revoked Status", func(tt *testing.T) {
 		bolt := setupTestDB(tt)
-		assert.NotNil(tt, bolt)
+		assert.NotEmpty(tt, bolt)
 
-		serviceConfig := config.CredentialServiceConfig{BaseServiceConfig: &config.BaseServiceConfig{Name: "credential", ServiceEndpoint: "http://localhost:1234"}}
+		serviceConfig := config.CredentialServiceConfig{BaseServiceConfig: &config.BaseServiceConfig{Name: "credential", ServiceEndpoint: "http://localhost:1234/v1/credentials"}}
 		keyStoreService := testKeyStoreService(tt, bolt)
 		didService := testDIDService(tt, bolt, keyStoreService)
 		schemaService := testSchemaService(tt, bolt, keyStoreService, didService)
@@ -457,18 +425,7 @@ func TestCredentialRouter(t *testing.T) {
 		assert.NotEmpty(tt, issuerDID)
 
 		// create a schema
-		emailSchema := map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"email": map[string]any{
-					"type": "string",
-				},
-			},
-			"required":             []any{"email"},
-			"additionalProperties": false,
-		}
-
-		createdSchema, err := schemaService.CreateSchema(context.Background(), schema.CreateSchemaRequest{Author: issuerDID.DID.ID, Name: "simple schema", Schema: emailSchema})
+		createdSchema, err := schemaService.CreateSchema(context.Background(), schema.CreateSchemaRequest{Issuer: issuerDID.DID.ID, Name: "simple schema", Schema: getEmailSchema()})
 		assert.NoError(tt, err)
 		assert.NotEmpty(tt, createdSchema)
 
@@ -544,6 +501,130 @@ func TestCredentialRouter(t *testing.T) {
 		assert.NoError(tt, err)
 		assert.Equal(tt, updatedStatus.Revoked, true)
 
+		updatedCred, err := credService.GetCredential(context.Background(), credential.GetCredentialRequest{ID: createdCred.ID})
+		assert.NoError(tt, err)
+		assert.Equal(tt, updatedCred.Revoked, true)
+
+		credStatusListAfterRevoke, err := credService.GetCredentialStatusList(context.Background(), credential.GetCredentialStatusListRequest{ID: credStatusListID})
+		assert.NoError(tt, err)
+		assert.Equal(tt, credStatusListAfterRevoke.Credential.ID, statusEntry.StatusListCredential)
+
+		// Validate the StatusListIndex in flipped in the credStatusList
+		valid, err = status.ValidateCredentialInStatusList(*createdCred.Credential, *credStatusListAfterRevoke.Credential)
+		assert.NoError(tt, err)
+		assert.True(tt, valid)
+
+		credentialSubjectAfterRevoke := credStatusListAfterRevoke.Container.Credential.CredentialSubject
+		assert.NotEmpty(tt, credentialSubjectAfterRevoke)
+
+		encodedListAfterRevoke := credentialSubjectAfterRevoke["encodedList"]
+		assert.NotEmpty(tt, encodedListAfterRevoke)
+
+		assert.NotEqualValues(tt, encodedListAfterRevoke, encodedList)
+
+	})
+
+	t.Run("Credential Status List Test Update Suspended Status", func(tt *testing.T) {
+		bolt := setupTestDB(tt)
+		assert.NotEmpty(tt, bolt)
+
+		serviceConfig := config.CredentialServiceConfig{BaseServiceConfig: &config.BaseServiceConfig{Name: "credential", ServiceEndpoint: "http://localhost:1234/v1/credentials"}}
+		keyStoreService := testKeyStoreService(tt, bolt)
+		didService := testDIDService(tt, bolt, keyStoreService)
+		schemaService := testSchemaService(tt, bolt, keyStoreService, didService)
+		credService, err := credential.NewCredentialService(serviceConfig, bolt, keyStoreService, didService.GetResolver(), schemaService)
+		assert.NoError(tt, err)
+		assert.NotEmpty(tt, credService)
+		// check type and status
+		assert.Equal(tt, framework.Credential, credService.Type())
+		assert.Equal(tt, framework.StatusReady, credService.Status().Status)
+
+		// create a did
+		issuerDID, err := didService.CreateDIDByMethod(context.Background(), did.CreateDIDRequest{Method: didsdk.KeyMethod, KeyType: crypto.Ed25519})
+		assert.NoError(tt, err)
+		assert.NotEmpty(tt, issuerDID)
+
+		// create a schema
+		createdSchema, err := schemaService.CreateSchema(context.Background(), schema.CreateSchemaRequest{Issuer: issuerDID.DID.ID, Name: "simple schema", Schema: getEmailSchema()})
+		assert.NoError(tt, err)
+		assert.NotEmpty(tt, createdSchema)
+
+		issuer := issuerDID.DID.ID
+		subject := "did:test:345"
+
+		nonSuspendableCred, err := credService.CreateCredential(context.Background(), credential.CreateCredentialRequest{
+			Issuer:    issuer,
+			IssuerKID: issuerDID.DID.VerificationMethod[0].ID,
+			Subject:   subject,
+			SchemaID:  createdSchema.ID,
+			Data: map[string]any{
+				"email": "cant@revoke.me",
+			},
+			Expiry: time.Now().Add(24 * time.Hour).Format(time.RFC3339),
+		})
+		assert.NoError(tt, err)
+
+		_, err = credService.UpdateCredentialStatus(context.Background(), credential.UpdateCredentialStatusRequest{ID: nonSuspendableCred.ID, Suspended: true})
+		assert.ErrorContains(tt, err, "has no credentialStatus field")
+
+		createdCred, err := credService.CreateCredential(context.Background(), credential.CreateCredentialRequest{
+			Issuer:    issuer,
+			IssuerKID: issuerDID.DID.VerificationMethod[0].ID,
+			Subject:   subject,
+			SchemaID:  createdSchema.ID,
+			Data: map[string]any{
+				"email": "Satoshi@Nakamoto.btc",
+			},
+			Expiry:      time.Now().Add(24 * time.Hour).Format(time.RFC3339),
+			Suspendable: true,
+		})
+
+		assert.NoError(tt, err)
+		assert.NotEmpty(tt, createdCred)
+		assert.NotEmpty(tt, createdCred.CredentialJWT)
+
+		statusBytes, err := json.Marshal(createdCred.Credential.CredentialStatus)
+		assert.NoError(tt, err)
+
+		var statusEntry status.StatusList2021Entry
+		err = json.Unmarshal(statusBytes, &statusEntry)
+		assert.NoError(tt, err)
+
+		assert.Contains(tt, statusEntry.ID, fmt.Sprintf("http://localhost:1234/v1/credentials/%s/status", createdCred.ID))
+		assert.Contains(tt, statusEntry.StatusListCredential, "http://localhost:1234/v1/credentials/status")
+		assert.NotEmpty(tt, statusEntry.StatusListIndex)
+
+		credStatus, err := credService.GetCredentialStatus(context.Background(), credential.GetCredentialStatusRequest{ID: createdCred.ID})
+		assert.NoError(tt, err)
+		assert.Equal(tt, credStatus.Suspended, false)
+
+		credStatusListStr := statusEntry.StatusListCredential
+
+		_, credStatusListID, ok := strings.Cut(credStatusListStr, "/v1/credentials/status/")
+		assert.True(tt, ok)
+		credStatusList, err := credService.GetCredentialStatusList(context.Background(), credential.GetCredentialStatusListRequest{ID: credStatusListID})
+		assert.NoError(tt, err)
+		assert.Equal(tt, credStatusList.Credential.ID, statusEntry.StatusListCredential)
+
+		credentialSubject := credStatusList.Container.Credential.CredentialSubject
+		assert.NotEmpty(tt, credentialSubject)
+
+		encodedList := credentialSubject["encodedList"]
+		assert.NotEmpty(tt, encodedList)
+
+		// Validate the StatusListIndex is not flipped in the credStatusList
+		valid, err := status.ValidateCredentialInStatusList(*createdCred.Credential, *credStatusList.Credential)
+		assert.NoError(tt, err)
+		assert.False(tt, valid)
+
+		updatedStatus, err := credService.UpdateCredentialStatus(context.Background(), credential.UpdateCredentialStatusRequest{ID: createdCred.ID, Suspended: true})
+		assert.NoError(tt, err)
+		assert.Equal(tt, updatedStatus.Suspended, true)
+
+		updatedCred, err := credService.GetCredential(context.Background(), credential.GetCredentialRequest{ID: createdCred.ID})
+		assert.NoError(tt, err)
+		assert.Equal(tt, updatedCred.Suspended, true)
+
 		credStatusListAfterRevoke, err := credService.GetCredentialStatusList(context.Background(), credential.GetCredentialStatusListRequest{ID: credStatusListID})
 		assert.NoError(tt, err)
 		assert.Equal(tt, credStatusListAfterRevoke.Credential.ID, statusEntry.StatusListCredential)
@@ -565,9 +646,9 @@ func TestCredentialRouter(t *testing.T) {
 
 	t.Run("Create Multiple Suspendable Credential Different IssuerDID SchemaID StatusPurpose Triples", func(tt *testing.T) {
 		bolt := setupTestDB(tt)
-		assert.NotNil(tt, bolt)
+		assert.NotEmpty(tt, bolt)
 
-		serviceConfig := config.CredentialServiceConfig{BaseServiceConfig: &config.BaseServiceConfig{Name: "credential", ServiceEndpoint: "http://localhost:1234"}}
+		serviceConfig := config.CredentialServiceConfig{BaseServiceConfig: &config.BaseServiceConfig{Name: "credential", ServiceEndpoint: "http://localhost:1234/v1/credentials"}}
 		keyStoreService := testKeyStoreService(tt, bolt)
 		didService := testDIDService(tt, bolt, keyStoreService)
 		schemaService := testSchemaService(tt, bolt, keyStoreService, didService)
@@ -584,18 +665,7 @@ func TestCredentialRouter(t *testing.T) {
 		assert.NotEmpty(tt, issuerDID)
 
 		// create a schema
-		emailSchema := map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"email": map[string]any{
-					"type": "string",
-				},
-			},
-			"required":             []any{"email"},
-			"additionalProperties": false,
-		}
-
-		createdSchema, err := schemaService.CreateSchema(context.Background(), schema.CreateSchemaRequest{Author: issuerDID.DID.ID, Name: "simple schema", Schema: emailSchema})
+		createdSchema, err := schemaService.CreateSchema(context.Background(), schema.CreateSchemaRequest{Issuer: issuerDID.DID.ID, Name: "simple schema", Schema: getEmailSchema()})
 		assert.NoError(tt, err)
 		assert.NotEmpty(tt, createdSchema)
 
@@ -952,7 +1022,7 @@ func createCredServicePrereqs(tt *testing.T) (issuer, issuerKID, schemaID string
 	bolt := setupTestDB(tt)
 	require.NotEmpty(tt, bolt)
 
-	serviceConfig := config.CredentialServiceConfig{BaseServiceConfig: &config.BaseServiceConfig{Name: "credential", ServiceEndpoint: "http://localhost:1234"}}
+	serviceConfig := config.CredentialServiceConfig{BaseServiceConfig: &config.BaseServiceConfig{Name: "credential", ServiceEndpoint: "http://localhost:1234/v1/credentials"}}
 	keyStoreService := testKeyStoreService(tt, bolt)
 	didService := testDIDService(tt, bolt, keyStoreService)
 	schemaService := testSchemaService(tt, bolt, keyStoreService, didService)
@@ -970,20 +1040,27 @@ func createCredServicePrereqs(tt *testing.T) (issuer, issuerKID, schemaID string
 	require.NotEmpty(tt, issuerDID)
 
 	// create a schema
-	emailSchema := map[string]any{
-		"type": "object",
-		"properties": map[string]any{
-			"email": map[string]any{
-				"type": "string",
-			},
-		},
-		"required":             []any{"email"},
-		"additionalProperties": false,
-	}
-
-	createdSchema, err := schemaService.CreateSchema(context.Background(), schema.CreateSchemaRequest{Author: issuerDID.DID.ID, Name: "simple schema", Schema: emailSchema})
+	createdSchema, err := schemaService.CreateSchema(context.Background(), schema.CreateSchemaRequest{Issuer: issuerDID.DID.ID, Name: "simple schema", Schema: getEmailSchema()})
 	require.NoError(tt, err)
 	require.NotEmpty(tt, createdSchema)
 
 	return issuerDID.DID.ID, issuerDID.DID.VerificationMethod[0].ID, createdSchema.ID, *credService
+}
+
+func getEmailSchema() map[string]any {
+	return map[string]any{
+		"$schema": "https://json-schema.org/draft-07/schema",
+		"type":    "object",
+		"properties": map[string]any{
+			"credentialSubject": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"email": map[string]any{
+						"type": "string",
+					},
+				},
+				"required": []any{"email"},
+			},
+		},
+	}
 }

@@ -19,7 +19,7 @@ type Storage struct {
 
 func NewWebhookStorage(db storage.ServiceStorage) (*Storage, error) {
 	if db == nil {
-		return nil, errors.New("bolt db reference is nil")
+		return nil, errors.New("db reference is nil")
 	}
 	return &Storage{db: db}, nil
 }
@@ -49,7 +49,7 @@ func (whs *Storage) GetWebhook(ctx context.Context, noun, verb string) (*Webhook
 	return &webhook, nil
 }
 
-func (whs *Storage) GetWebhooks(ctx context.Context) ([]Webhook, error) {
+func (whs *Storage) ListWebhooks(ctx context.Context) ([]Webhook, error) {
 	gotWebhooks, err := whs.db.ReadAll(ctx, webhookNamespace)
 	if err != nil {
 		return nil, sdkutil.LoggingErrorMsg(err, "could not get all webhooks")

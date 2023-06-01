@@ -11,10 +11,11 @@ import (
 	"github.com/lestrrat-go/jwx/jws"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
-
 	"github.com/tbd54566975/ssi-service/config"
 	"github.com/tbd54566975/ssi-service/internal/credential"
 	didint "github.com/tbd54566975/ssi-service/internal/did"
+	"github.com/tbd54566975/ssi-service/internal/keyaccess"
+	"github.com/tbd54566975/ssi-service/pkg/service/common"
 	"github.com/tbd54566975/ssi-service/pkg/service/framework"
 	"github.com/tbd54566975/ssi-service/pkg/service/keystore"
 	"github.com/tbd54566975/ssi-service/pkg/service/operation"
@@ -27,7 +28,7 @@ import (
 )
 
 type Service struct {
-	storage    *Storage
+	storage    presentationstorage.Storage
 	keystore   *keystore.Service
 	opsStorage *operation.Storage
 	config     config.PresentationServiceConfig
@@ -101,25 +102,17 @@ func (s Service) CreatePresentationDefinition(ctx context.Context,
 		return nil, sdkutil.LoggingErrorMsg(err, "provided value is not a valid presentation definition")
 	}
 
-	storedPresentation := StoredPresentation{
+	storedPresentation := presentationstorage.StoredDefinition{
 		ID:                     request.PresentationDefinition.ID,
 		PresentationDefinition: request.PresentationDefinition,
-		Author:                 request.Author,
-		AuthorKID:              request.AuthorKID,
 	}
 
-	if err := s.storage.StorePresentation(ctx, storedPresentation); err != nil {
+	if err := s.storage.StoreDefinition(ctx, storedPresentation); err != nil {
 		return nil, sdkutil.LoggingErrorMsg(err, "could not store presentation")
-	}
-	defJWT, err := s.keystore.Sign(context.Background(), storedPresentation.AuthorKID,
-		exchange.PresentationDefinitionEnvelope{PresentationDefinition: storedPresentation.PresentationDefinition})
-	if err != nil {
-		return nil, sdkutil.LoggingErrorMsgf(err, "signing presentation definition enveloper with author<%s>", storedPresentation.Author)
 	}
 
 	var m model.CreatePresentationDefinitionResponse
 	m.PresentationDefinition = storedPresentation.PresentationDefinition
-	m.PresentationDefinitionJWT = *defJWT
 	return &m, nil
 }
 
@@ -127,30 +120,22 @@ func (s Service) GetPresentationDefinition(ctx context.Context,
 	request model.GetPresentationDefinitionRequest) (*model.GetPresentationDefinitionResponse, error) {
 	logrus.Debugf("getting presentation definition: %s", request.ID)
 
-	storedPresentation, err := s.storage.GetPresentation(ctx, request.ID)
+	storedDefinition, err := s.storage.GetDefinition(ctx, request.ID)
 	if err != nil {
 		return nil, sdkutil.LoggingErrorMsgf(err, "error getting presentation definition: %s", request.ID)
 	}
-	if storedPresentation == nil {
+	if storedDefinition == nil {
 		return nil, sdkutil.LoggingNewErrorf("presentation definition with id<%s> could not be found", request.ID)
 	}
-	// TODO(gabe) decouple this to a separate endpoint for presentation requests https://github.com/TBD54566975/ssi-service/issues/375
-	defJWT, err := s.keystore.Sign(ctx, storedPresentation.AuthorKID,
-		exchange.PresentationDefinitionEnvelope{PresentationDefinition: storedPresentation.PresentationDefinition})
-	if err != nil {
-		return nil, sdkutil.LoggingErrorMsgf(err, "signing presentation definition envelope by issuer<%s>", storedPresentation.Author)
-	}
 	return &model.GetPresentationDefinitionResponse{
-		ID:                        storedPresentation.ID,
-		PresentationDefinition:    storedPresentation.PresentationDefinition,
-		PresentationDefinitionJWT: *defJWT,
+		PresentationDefinition: storedDefinition.PresentationDefinition,
 	}, nil
 }
 
 func (s Service) DeletePresentationDefinition(ctx context.Context, request model.DeletePresentationDefinitionRequest) error {
 	logrus.Debugf("deleting presentation definition: %s", request.ID)
 
-	if err := s.storage.DeletePresentation(ctx, request.ID); err != nil {
+	if err := s.storage.DeleteDefinition(ctx, request.ID); err != nil {
 		return sdkutil.LoggingNewErrorf("could not delete presentation definition with id: %s", request.ID)
 	}
 
@@ -191,7 +176,7 @@ func (s Service) CreateSubmission(ctx context.Context, request model.CreateSubmi
 		return nil, errors.Errorf("submission with id %s already present", request.Submission.ID)
 	}
 
-	definition, err := s.storage.GetPresentation(ctx, request.Submission.DefinitionID)
+	storedDefinition, err := s.storage.GetDefinition(ctx, request.Submission.DefinitionID)
 	if err != nil {
 		return nil, errors.Wrap(err, "getting presentation definition")
 	}
@@ -214,7 +199,7 @@ func (s Service) CreateSubmission(ctx context.Context, request model.CreateSubmi
 	}
 
 	// TODO(gabe) plug in additional credential verification logic here
-	if _, err = exchange.VerifyPresentationSubmissionVP(definition.PresentationDefinition, request.Presentation); err != nil {
+	if _, err = exchange.VerifyPresentationSubmissionVP(storedDefinition.PresentationDefinition, request.Presentation); err != nil {
 		return nil, errors.Wrap(err, "verifying presentation submission vp")
 	}
 
@@ -307,4 +292,71 @@ func (s Service) ListDefinitions(ctx context.Context) (*model.ListDefinitionsRes
 	}
 
 	return resp, nil
+}
+
+func (s Service) CreateRequest(ctx context.Context, req model.CreateRequestRequest) (*model.Request, error) {
+	if err := sdkutil.IsValidStruct(req); err != nil {
+		return nil, err
+	}
+
+	request := req.PresentationRequest
+	pd, err := s.storage.GetDefinition(ctx, request.PresentationDefinitionID)
+	if err != nil {
+		return nil, errors.Wrap(err, "getting presentation definition")
+	}
+	if pd == nil {
+		return nil, errors.Errorf("presentation definition %q is nil", request.PresentationDefinitionID)
+	}
+
+	stored, err := common.CreateStoredRequest(
+		ctx,
+		s.keystore,
+		"presentation_definition",
+		pd.PresentationDefinition,
+		request.Request,
+		request.PresentationDefinitionID,
+	)
+	if err != nil {
+		return nil, errors.Wrap(err, "creating stored request")
+	}
+	if err := s.storage.StoreRequest(ctx, *stored); err != nil {
+		return nil, errors.Wrap(err, "storing signed document")
+	}
+	return serviceModel(stored)
+}
+
+func (s Service) GetRequest(ctx context.Context, request *model.GetRequestRequest) (*model.Request, error) {
+	logrus.Debugf("getting presentation request: %s", request.ID)
+
+	storedRequest, err := s.storage.GetRequest(ctx, request.ID)
+	if err != nil {
+		return nil, errors.Wrapf(err, "getting signed document with id: %s", request.ID)
+	}
+	if storedRequest == nil {
+		return nil, sdkutil.LoggingNewErrorf("presentation request with id<%s> could not be found", request.ID)
+	}
+
+	return serviceModel(storedRequest)
+}
+
+func (s Service) DeleteRequest(ctx context.Context, request model.DeleteRequestRequest) error {
+	logrus.Debugf("deleting presentation request: %s", request.ID)
+
+	if err := s.storage.DeleteRequest(ctx, request.ID); err != nil {
+		return sdkutil.LoggingNewErrorf("could not delete presentation request with id: %s", request.ID)
+	}
+
+	return nil
+}
+
+func serviceModel(storedRequest *common.StoredRequest) (*model.Request, error) {
+	req, err := common.ToServiceModel(storedRequest)
+	if err != nil {
+		return nil, err
+	}
+	return &model.Request{
+		Request:                   *req,
+		PresentationDefinitionID:  storedRequest.ReferenceID,
+		PresentationDefinitionJWT: keyaccess.JWT(storedRequest.JWT),
+	}, nil
 }

@@ -53,7 +53,6 @@ type SSIServiceConfig struct {
 type ServerConfig struct {
 	Environment         Environment   `toml:"env" conf:"default:dev"`
 	APIHost             string        `toml:"api_host" conf:"default:0.0.0.0:3000"`
-	DebugHost           string        `toml:"debug_host" conf:"default:0.0.0.0:4000"`
 	JagerHost           string        `toml:"jager_host" conf:"http://jaeger:14268/api/traces"`
 	JagerEnabled        bool          `toml:"jager_enabled" conf:"default:false"`
 	ReadTimeout         time.Duration `toml:"read_timeout" conf:"default:5s"`
@@ -63,17 +62,6 @@ type ServerConfig struct {
 	LogLevel            string        `toml:"log_level" conf:"default:debug"`
 	EnableSchemaCaching bool          `toml:"enable_schema_caching" conf:"default:true"`
 	EnableAllowAllCORS  bool          `toml:"enable_allow_all_cors" conf:"default:false"`
-}
-
-type IssuingServiceConfig struct {
-	*BaseServiceConfig
-}
-
-func (s *IssuingServiceConfig) IsEmpty() bool {
-	if s == nil {
-		return true
-	}
-	return reflect.DeepEqual(s, &IssuingServiceConfig{})
 }
 
 // ServicesConfig represents configurable properties for the components of the SSI Service
@@ -86,14 +74,15 @@ type ServicesConfig struct {
 	ServiceEndpoint string           `toml:"service_endpoint"`
 
 	// Embed all service-specific configs here. The order matters: from which should be instantiated first, to last
-	KeyStoreConfig       KeyStoreServiceConfig     `toml:"keystore,omitempty"`
-	DIDConfig            DIDServiceConfig          `toml:"did,omitempty"`
-	IssuingServiceConfig IssuingServiceConfig      `toml:"issuing,omitempty"`
-	SchemaConfig         SchemaServiceConfig       `toml:"schema,omitempty"`
-	CredentialConfig     CredentialServiceConfig   `toml:"credential,omitempty"`
-	ManifestConfig       ManifestServiceConfig     `toml:"manifest,omitempty"`
-	PresentationConfig   PresentationServiceConfig `toml:"presentation,omitempty"`
-	WebhookConfig        WebhookServiceConfig      `toml:"webhook,omitempty"`
+	KeyStoreConfig        KeyStoreServiceConfig     `toml:"keystore,omitempty"`
+	DIDConfig             DIDServiceConfig          `toml:"did,omitempty"`
+	SchemaConfig          SchemaServiceConfig       `toml:"schema,omitempty"`
+	CredentialConfig      CredentialServiceConfig   `toml:"credential,omitempty"`
+	OperationConfig       OperationServiceConfig    `toml:"operation,omitempty"`
+	PresentationConfig    PresentationServiceConfig `toml:"presentation,omitempty"`
+	ManifestConfig        ManifestServiceConfig     `toml:"manifest,omitempty"`
+	IssuanceServiceConfig IssuanceServiceConfig     `toml:"issuance,omitempty"`
+	WebhookConfig         WebhookServiceConfig      `toml:"webhook,omitempty"`
 }
 
 // BaseServiceConfig represents configurable properties for a specific component of the SSI Service
@@ -165,8 +154,32 @@ func (c *CredentialServiceConfig) IsEmpty() bool {
 	return reflect.DeepEqual(c, &CredentialServiceConfig{})
 }
 
+type OperationServiceConfig struct {
+	*BaseServiceConfig
+}
+
+func (o *OperationServiceConfig) IsEmpty() bool {
+	if o == nil {
+		return true
+	}
+	return reflect.DeepEqual(o, &OperationServiceConfig{})
+}
+
+type PresentationServiceConfig struct {
+	*BaseServiceConfig
+	ExpirationDuration time.Duration `toml:"expiration_duration" conf:"default:30m"`
+}
+
+func (p *PresentationServiceConfig) IsEmpty() bool {
+	if p == nil {
+		return true
+	}
+	return reflect.DeepEqual(p, &PresentationServiceConfig{})
+}
+
 type ManifestServiceConfig struct {
 	*BaseServiceConfig
+	ExpirationDuration time.Duration `toml:"expiration_duration" conf:"default:30m"`
 }
 
 func (m *ManifestServiceConfig) IsEmpty() bool {
@@ -176,15 +189,15 @@ func (m *ManifestServiceConfig) IsEmpty() bool {
 	return reflect.DeepEqual(m, &ManifestServiceConfig{})
 }
 
-type PresentationServiceConfig struct {
+type IssuanceServiceConfig struct {
 	*BaseServiceConfig
 }
 
-func (p *PresentationServiceConfig) IsEmpty() bool {
-	if p == nil {
+func (s *IssuanceServiceConfig) IsEmpty() bool {
+	if s == nil {
 		return true
 	}
-	return reflect.DeepEqual(p, &PresentationServiceConfig{})
+	return reflect.DeepEqual(s, &IssuanceServiceConfig{})
 }
 
 type WebhookServiceConfig struct {
@@ -214,7 +227,8 @@ func LoadConfig(path string) (*SSIServiceConfig, error) {
 	}
 
 	if loadDefaultConfig {
-		loadDefaultServicesConfig(&config)
+		defaultServicesConfig := getDefaultServicesConfig()
+		config.Services = defaultServicesConfig
 	} else if err = loadTOMLConfig(path, &config); err != nil {
 		return nil, errors.Wrap(err, "load toml config")
 	}
@@ -235,74 +249,73 @@ func checkValidConfigPath(path string) (bool, error) {
 	} else if filepath.Ext(path) != Extension {
 		return false, fmt.Errorf("path<%s> did not match the expected TOML format", path)
 	}
-
 	return defaultConfig, nil
 }
 
 func parseAndApplyDefaults(config SSIServiceConfig) error {
 	// parse and apply defaults
-	if err := conf.Parse(os.Args[1:], ServiceName, &config); err != nil {
-		switch {
-		case errors.Is(err, conf.ErrHelpWanted):
-			usage, err := conf.Usage(ServiceName, &config)
-			if err != nil {
-				return errors.Wrap(err, "parsing config")
-			}
-			fmt.Println(usage)
+	err := conf.Parse(os.Args[1:], ServiceName, &config)
+	if err == nil {
+		return nil
+	}
+	switch {
+	case errors.Is(err, conf.ErrHelpWanted):
+		usage, err := conf.Usage(ServiceName, &config)
+		if err != nil {
+			return errors.Wrap(err, "parsing config")
+		}
+		logrus.Println(usage)
 
-			return nil
-
-		case errors.Is(err, conf.ErrVersionWanted):
-			version, err := conf.VersionString(ServiceName, &config)
-			if err != nil {
-				return errors.Wrap(err, "generating config version")
-			}
-
-			fmt.Println(version)
-			return nil
+		return nil
+	case errors.Is(err, conf.ErrVersionWanted):
+		version, err := conf.VersionString(ServiceName, &config)
+		if err != nil {
+			return errors.Wrap(err, "generating config version")
 		}
 
-		return errors.Wrap(err, "parsing config")
+		logrus.Println(version)
+		return nil
 	}
-
-	return nil
+	return errors.Wrap(err, "parsing config")
 }
 
-func loadDefaultServicesConfig(config *SSIServiceConfig) {
-	servicesConfig := ServicesConfig{
+// TODO(gabe) remove this from config in https://github.com/TBD54566975/ssi-service/issues/502
+func getDefaultServicesConfig() ServicesConfig {
+	return ServicesConfig{
 		StorageProvider: "bolt",
 		ServiceEndpoint: DefaultServiceEndpoint,
 		KeyStoreConfig: KeyStoreServiceConfig{
-			BaseServiceConfig: &BaseServiceConfig{Name: "keystore"},
+			BaseServiceConfig: &BaseServiceConfig{Name: "keystore", ServiceEndpoint: DefaultServiceEndpoint + "/v1/keys"},
 			MasterKeyPassword: "default-password",
 		},
 		DIDConfig: DIDServiceConfig{
-			BaseServiceConfig:      &BaseServiceConfig{Name: "did"},
+			BaseServiceConfig:      &BaseServiceConfig{Name: "did", ServiceEndpoint: DefaultServiceEndpoint + "/v1/dids"},
 			Methods:                []string{"key", "web"},
-			LocalResolutionMethods: []string{"key", "peer", "web", "pkh"},
+			LocalResolutionMethods: []string{"key", "peer", "web", "jwk", "pkh"},
 		},
 		SchemaConfig: SchemaServiceConfig{
-			BaseServiceConfig: &BaseServiceConfig{Name: "schema"},
+			BaseServiceConfig: &BaseServiceConfig{Name: "schema", ServiceEndpoint: DefaultServiceEndpoint + "/v1/schemas"},
 		},
 		CredentialConfig: CredentialServiceConfig{
-			BaseServiceConfig: &BaseServiceConfig{Name: "credential", ServiceEndpoint: DefaultServiceEndpoint},
+			BaseServiceConfig: &BaseServiceConfig{Name: "credential", ServiceEndpoint: DefaultServiceEndpoint + "/v1/credentials"},
 		},
-		ManifestConfig: ManifestServiceConfig{
-			BaseServiceConfig: &BaseServiceConfig{Name: "manifest"},
+		OperationConfig: OperationServiceConfig{
+			BaseServiceConfig: &BaseServiceConfig{Name: "operation", ServiceEndpoint: DefaultServiceEndpoint + "/v1/operations"},
 		},
 		PresentationConfig: PresentationServiceConfig{
-			BaseServiceConfig: &BaseServiceConfig{Name: "presentation"},
+			BaseServiceConfig: &BaseServiceConfig{Name: "presentation", ServiceEndpoint: DefaultServiceEndpoint + "/v1/presentations"},
 		},
-		IssuingServiceConfig: IssuingServiceConfig{
-			BaseServiceConfig: &BaseServiceConfig{Name: "issuing"},
+		ManifestConfig: ManifestServiceConfig{
+			BaseServiceConfig: &BaseServiceConfig{Name: "manifest", ServiceEndpoint: DefaultServiceEndpoint + "/v1/manifests"},
+		},
+		IssuanceServiceConfig: IssuanceServiceConfig{
+			BaseServiceConfig: &BaseServiceConfig{Name: "issuance", ServiceEndpoint: DefaultServiceEndpoint + "/v1/issuancetemplates"},
 		},
 		WebhookConfig: WebhookServiceConfig{
-			BaseServiceConfig: &BaseServiceConfig{Name: "webhook"},
+			BaseServiceConfig: &BaseServiceConfig{Name: "webhook", ServiceEndpoint: DefaultServiceEndpoint + "/v1/webhooks"},
 			WebhookTimeout:    "10s",
 		},
 	}
-
-	config.Services = servicesConfig
 }
 
 func loadTOMLConfig(path string, config *SSIServiceConfig) error {
@@ -311,11 +324,63 @@ func loadTOMLConfig(path string, config *SSIServiceConfig) error {
 		return errors.Wrapf(err, "could not load config: %s", path)
 	}
 
-	// apply defaults if not included in toml file
-	if config.Services.CredentialConfig.BaseServiceConfig.ServiceEndpoint == "" {
-		config.Services.CredentialConfig.BaseServiceConfig.ServiceEndpoint = config.Services.ServiceEndpoint
+	// apply defaults
+	services := config.Services
+	endpoint := services.ServiceEndpoint + "/v1"
+	if services.KeyStoreConfig.IsEmpty() {
+		services.KeyStoreConfig = KeyStoreServiceConfig{
+			BaseServiceConfig: new(BaseServiceConfig),
+		}
 	}
-
+	services.KeyStoreConfig.ServiceEndpoint = endpoint + "/keys"
+	if services.DIDConfig.IsEmpty() {
+		services.DIDConfig = DIDServiceConfig{
+			BaseServiceConfig: new(BaseServiceConfig),
+		}
+	}
+	services.DIDConfig.ServiceEndpoint = endpoint + "/dids"
+	if services.SchemaConfig.IsEmpty() {
+		services.SchemaConfig = SchemaServiceConfig{
+			BaseServiceConfig: new(BaseServiceConfig),
+		}
+	}
+	services.SchemaConfig.ServiceEndpoint = endpoint + "/schemas"
+	if services.CredentialConfig.IsEmpty() {
+		services.CredentialConfig = CredentialServiceConfig{
+			BaseServiceConfig: new(BaseServiceConfig),
+		}
+	}
+	services.CredentialConfig.ServiceEndpoint = endpoint + "/credentials"
+	if services.OperationConfig.IsEmpty() {
+		services.OperationConfig = OperationServiceConfig{
+			BaseServiceConfig: new(BaseServiceConfig),
+		}
+	}
+	services.OperationConfig.ServiceEndpoint = endpoint + "/operations"
+	if services.PresentationConfig.IsEmpty() {
+		services.PresentationConfig = PresentationServiceConfig{
+			BaseServiceConfig: new(BaseServiceConfig),
+		}
+	}
+	services.PresentationConfig.ServiceEndpoint = endpoint + "/presentations"
+	if services.ManifestConfig.IsEmpty() {
+		services.ManifestConfig = ManifestServiceConfig{
+			BaseServiceConfig: new(BaseServiceConfig),
+		}
+	}
+	services.ManifestConfig.ServiceEndpoint = endpoint + "/manifests"
+	if services.IssuanceServiceConfig.IsEmpty() {
+		services.IssuanceServiceConfig = IssuanceServiceConfig{
+			BaseServiceConfig: new(BaseServiceConfig),
+		}
+	}
+	services.IssuanceServiceConfig.ServiceEndpoint = endpoint + "/issuancetemplates"
+	if services.WebhookConfig.IsEmpty() {
+		services.WebhookConfig = WebhookServiceConfig{
+			BaseServiceConfig: new(BaseServiceConfig),
+		}
+	}
+	services.WebhookConfig.ServiceEndpoint = endpoint + "/webhooks"
 	return nil
 }
 

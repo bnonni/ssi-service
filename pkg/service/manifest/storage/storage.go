@@ -25,11 +25,10 @@ const (
 )
 
 type StoredManifest struct {
-	ID          string                      `json:"id"`
-	IssuerDID   string                      `json:"issuerDid"`
-	IssuerKID   string                      `json:"issuerKid"`
-	Manifest    manifest.CredentialManifest `json:"manifest"`
-	ManifestJWT keyaccess.JWT               `json:"manifestJwt"`
+	ID        string                      `json:"id"`
+	IssuerDID string                      `json:"issuerDid"`
+	IssuerKID string                      `json:"issuerKid"`
+	Manifest  manifest.CredentialManifest `json:"manifest"`
 }
 
 type StoredApplication struct {
@@ -58,7 +57,7 @@ type Storage struct {
 
 func NewManifestStorage(db storage.ServiceStorage) (*Storage, error) {
 	if db == nil {
-		return nil, errors.New("bolt db reference is nil")
+		return nil, errors.New("db reference is nil")
 	}
 	return &Storage{db: db}, nil
 }
@@ -90,8 +89,8 @@ func (ms *Storage) GetManifest(ctx context.Context, id string) (*StoredManifest,
 	return &stored, nil
 }
 
-// GetManifests attempts to get all stored manifests. It will return those it can even if it has trouble with some.
-func (ms *Storage) GetManifests(ctx context.Context) ([]StoredManifest, error) {
+// ListManifests attempts to get all stored manifests. It will return those it can even if it has trouble with some.
+func (ms *Storage) ListManifests(ctx context.Context) ([]StoredManifest, error) {
 	gotManifests, err := ms.db.ReadAll(ctx, manifestNamespace)
 	if err != nil {
 		return nil, sdkutil.LoggingErrorMsgf(err, "getting all manifests")
@@ -146,14 +145,14 @@ func (ms *Storage) GetApplication(ctx context.Context, id string) (*StoredApplic
 	return &stored, nil
 }
 
-// GetApplications attempts to get all stored applications. It will return those it can even if it has trouble with some.
-func (ms *Storage) GetApplications(ctx context.Context) ([]StoredApplication, error) {
+// ListApplications attempts to get all stored applications. It will return those it can even if it has trouble with some.
+func (ms *Storage) ListApplications(ctx context.Context) ([]StoredApplication, error) {
 	gotApplications, err := ms.db.ReadAll(ctx, credential.ApplicationNamespace)
 	if err != nil {
-		return nil, sdkutil.LoggingErrorMsg(err, "getting all applications")
+		return nil, sdkutil.LoggingErrorMsg(err, "listing all applications")
 	}
 	if len(gotApplications) == 0 {
-		logrus.Info("no applications to get")
+		logrus.Info("no applications to list")
 		return nil, nil
 	}
 	var stored []StoredApplication
@@ -162,7 +161,7 @@ func (ms *Storage) GetApplications(ctx context.Context) ([]StoredApplication, er
 		if err = json.Unmarshal(applicationBytes, &nextApplication); err == nil {
 			stored = append(stored, nextApplication)
 		} else {
-			logrus.WithError(err).Errorf("could not unmarshal stored application while getting all applications: %s", appKey)
+			logrus.WithError(err).Errorf("could not unmarshal stored application while listing all applications: %s", appKey)
 		}
 	}
 	return stored, nil
@@ -202,14 +201,14 @@ func (ms *Storage) GetResponse(ctx context.Context, id string) (*StoredResponse,
 	return &stored, nil
 }
 
-// GetResponses attempts to get all stored responses. It will return those it can even if it has trouble with some.
-func (ms *Storage) GetResponses(ctx context.Context) ([]StoredResponse, error) {
+// ListResponses attempts to get all stored responses. It will return those it can even if it has trouble with some.
+func (ms *Storage) ListResponses(ctx context.Context) ([]StoredResponse, error) {
 	gotResponses, err := ms.db.ReadAll(ctx, responseNamespace)
 	if err != nil {
-		return nil, sdkutil.LoggingErrorMsg(err, "getting all responses")
+		return nil, sdkutil.LoggingErrorMsg(err, "listing all responses")
 	}
 	if len(gotResponses) == 0 {
-		logrus.Info("no responses to get")
+		logrus.Info("no responses to list")
 		return nil, nil
 	}
 	var stored []StoredResponse
@@ -218,7 +217,7 @@ func (ms *Storage) GetResponses(ctx context.Context) ([]StoredResponse, error) {
 		if err = json.Unmarshal(responseBytes, &nextResponse); err == nil {
 			stored = append(stored, nextResponse)
 		} else {
-			logrus.WithError(err).Errorf("could not unmarshal stored response while getting all responses: %s", responseKey)
+			logrus.WithError(err).Errorf("could not unmarshal stored response while listing all responses: %s", responseKey)
 		}
 	}
 	return stored, nil

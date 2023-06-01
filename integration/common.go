@@ -19,6 +19,7 @@ import (
 
 	credmodel "github.com/tbd54566975/ssi-service/internal/credential"
 	"github.com/tbd54566975/ssi-service/internal/keyaccess"
+	"github.com/tbd54566975/ssi-service/internal/util"
 	"github.com/tbd54566975/ssi-service/pkg/server/router"
 )
 
@@ -39,6 +40,7 @@ func init() {
 	// Treats "\n" as new lines, see https://github.com/sirupsen/logrus/issues/608
 	logrus.SetFormatter(&logrus.TextFormatter{
 		DisableQuote: true,
+		ForceColors:  true,
 	})
 }
 
@@ -105,24 +107,30 @@ func CreateKYCSchema() (string, error) {
 }
 
 type credInputParams struct {
-	IssuerID  string
-	IssuerKID string
-	SchemaID  string
-	SubjectID string
+	IssuerID    string
+	IssuerKID   string
+	SchemaID    string
+	SubjectID   string
+	Revocable   bool
+	Suspendable bool
 }
 
-func CreateVerifiableCredential(credentialInput credInputParams, revocable bool) (string, error) {
+func CreateVerifiableCredential(credentialInput credInputParams) (string, error) {
 	logrus.Println("\n\nCreate a verifiable credential")
 
 	if credentialInput.SubjectID == "" {
 		credentialInput.SubjectID = credentialInput.IssuerID
 	}
 
-	fileName := "credential-input.json"
-	if revocable {
-		fileName = "credential-revocable-input.json"
+	if credentialInput.Revocable {
+		credentialInput.Revocable = true
 	}
-	credentialJSON, err := resolveTemplate(credentialInput, fileName)
+
+	if credentialInput.Suspendable {
+		credentialInput.Suspendable = true
+	}
+
+	credentialJSON, err := resolveTemplate(credentialInput, "credential-input.json")
 	if err != nil {
 		return "", err
 	}
@@ -377,7 +385,7 @@ func get(url string) (string, error) {
 		return "", errors.Wrap(err, "parsing body")
 	}
 
-	if !is2xxResponse(resp.StatusCode) {
+	if !util.Is2xxResponse(resp.StatusCode) {
 		return "", fmt.Errorf("status code not in the 200s. body: %s", string(body))
 	}
 
@@ -406,7 +414,7 @@ func put(url string, json string) (string, error) {
 	}
 
 	bodyStr := string(body)
-	if !is2xxResponse(resp.StatusCode) {
+	if !util.Is2xxResponse(resp.StatusCode) {
 		return "", fmt.Errorf("status code %v not in the 200s. body: %s", resp.StatusCode, bodyStr)
 	}
 
@@ -419,10 +427,6 @@ func put(url string, json string) (string, error) {
 func getJSONFromFile(fileName string) string {
 	b, _ := testVectors.ReadFile("testdata/" + fileName)
 	return string(b)
-}
-
-func is2xxResponse(statusCode int) bool {
-	return statusCode/100 == 2
 }
 
 func getValidApplicationRequest(credAppJSON string, credentialJWT string) manifestsdk.CredentialApplicationWrapper {

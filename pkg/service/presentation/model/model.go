@@ -5,6 +5,7 @@ import (
 	"github.com/TBD54566975/ssi-sdk/credential/exchange"
 	"github.com/TBD54566975/ssi-sdk/util"
 	"github.com/goccy/go-json"
+	"github.com/tbd54566975/ssi-service/pkg/service/common"
 	"go.einride.tech/aip/filtering"
 
 	"github.com/tbd54566975/ssi-service/internal/credential"
@@ -14,8 +15,6 @@ import (
 
 type CreatePresentationDefinitionRequest struct {
 	PresentationDefinition exchange.PresentationDefinition `json:"presentationDefinition" validate:"required"`
-	Author                 string                          `json:"author" validate:"required"`
-	AuthorKID              string                          `json:"authorKid" validate:"required"`
 }
 
 func (cpr CreatePresentationDefinitionRequest) IsValid() error {
@@ -23,8 +22,7 @@ func (cpr CreatePresentationDefinitionRequest) IsValid() error {
 }
 
 type CreatePresentationDefinitionResponse struct {
-	PresentationDefinition    exchange.PresentationDefinition `json:"presentationDefinition"`
-	PresentationDefinitionJWT keyaccess.JWT                   `json:"presentationDefinitionJWT"`
+	PresentationDefinition exchange.PresentationDefinition `json:"presentationDefinition"`
 }
 
 type GetPresentationDefinitionRequest struct {
@@ -32,9 +30,7 @@ type GetPresentationDefinitionRequest struct {
 }
 
 type GetPresentationDefinitionResponse struct {
-	ID                        string                          `json:"id"`
-	PresentationDefinition    exchange.PresentationDefinition `json:"presentationDefinition"`
-	PresentationDefinitionJWT keyaccess.JWT                   `json:"presentationDefinitionJWT"`
+	PresentationDefinition exchange.PresentationDefinition `json:"presentationDefinition"`
 }
 
 type DeletePresentationDefinitionRequest struct {
@@ -76,7 +72,7 @@ type Submission struct {
 	// One of {`pending`, `approved`, `denied`, `cancelled`}.
 	Status string `json:"status" validate:"required"`
 	// The reason why the submission was approved or denied.
-	Reason string `json:"reason"`
+	Reason string `json:"reason,omitempty"`
 	// The verifiable presentation containing the presentation_submission along with the credentials presented.
 	VerifiablePresentation *credsdk.VerifiablePresentation `json:"verifiablePresentation,omitempty"`
 }
@@ -123,4 +119,37 @@ func ServiceModel(storedSubmission *storage.StoredSubmission) Submission {
 		Reason:                 storedSubmission.Reason,
 		VerifiablePresentation: &storedSubmission.VerifiablePresentation,
 	}
+}
+
+type CreateRequestRequest struct {
+	PresentationRequest Request `json:"presentationRequest"`
+}
+
+type CreateRequestResponse struct {
+	PresentationRequest Request `json:"presentationRequest"`
+}
+
+type GetRequestRequest struct {
+	ID string `json:"id" validate:"required"`
+}
+
+type GetRequestResponse struct {
+	ID                  string  `json:"id"`
+	PresentationRequest Request `json:"presentationRequest"`
+}
+
+type DeleteRequestRequest struct {
+	ID string `json:"id" validate:"required"`
+}
+
+type Request struct {
+	common.Request
+
+	// ID of the presentation definition used for this request.
+	PresentationDefinitionID string `json:"presentationDefinitionId" validate:"required"`
+
+	// PresentationDefinitionJWT is a JWT token with a "presentation_definition" claim within it. The
+	// value of the field named "presentation_definition.id" matches PresentationDefinitionID.
+	// This is an output only field.
+	PresentationDefinitionJWT keyaccess.JWT `json:"presentationRequestJwt"`
 }

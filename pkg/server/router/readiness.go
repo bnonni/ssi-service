@@ -10,7 +10,7 @@ import (
 	svcframework "github.com/tbd54566975/ssi-service/pkg/service/framework"
 )
 
-func Readiness(services []svcframework.Service) framework.Handler {
+func Readiness(services []svcframework.Service) gin.HandlerFunc {
 	return readiness{getter: servicesToGet{services: services}}.ready
 }
 
@@ -22,7 +22,7 @@ type GetReadinessResponse struct {
 	// Overall status of the ssi service.
 	Status svcframework.Status `json:"status"`
 
-	// A map from the name of the service ot the status of that current service.
+	// A map from the name of the service to the status of that current service.
 	ServiceStatuses map[svcframework.Type]svcframework.Status `json:"serviceStatuses"`
 }
 
@@ -36,7 +36,7 @@ type GetReadinessResponse struct {
 //	@Produce		json
 //	@Success		200	{object}	GetReadinessResponse
 //	@Router			/readiness [get]
-func (r readiness) ready(c *gin.Context) error {
+func (r readiness) ready(c *gin.Context) {
 	services := r.getter.getServices()
 	numServices := len(services)
 	readyServices := 0
@@ -66,7 +66,7 @@ func (r readiness) ready(c *gin.Context) error {
 		ServiceStatuses: statuses,
 	}
 
-	return framework.Respond(c, response, http.StatusOK)
+	framework.Respond(c, response, http.StatusOK)
 }
 
 // serviceGetter is a dependency of this readiness handler to know which service are available in the server

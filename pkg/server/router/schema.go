@@ -30,26 +30,34 @@ func NewSchemaRouter(s svcframework.Service) (*SchemaRouter, error) {
 }
 
 type CreateSchemaRequest struct {
-	Author string               `json:"author" validate:"required"`
-	Name   string               `json:"name" validate:"required"`
+	// Name is a human-readable name for a schema
+	Name string `json:"name" validate:"required"`
+	// Description is an optional human-readable description for a schema
+	Description string `json:"description,omitempty"`
+	// Schema represents the JSON schema for the credential schema
+	// If the schema has an $id field, it will be overwritten with an ID the service generates.
+	// The schema must be against draft 2020-12, 2019-09, or 7.
 	Schema schemalib.JSONSchema `json:"schema" validate:"required"`
 
+	// TODO(gabe): re-enable in https://github.com/TBD54566975/ssi-service/issues/493
 	// Sign represents whether the schema should be signed by the author. Default is false.
-	// If sign is true, the schema will be signed by the author's private key with the specified KID
-	Sign bool `json:"sign"`
-	// AuthorKID represents the KID of the author's private key to sign the schema. Required if sign is true.
-	AuthorKID string `json:"authorKid"`
+	// If sign is true, the schema will be signed by the issuer's private key with the specified KID
+	// Sign bool `json:"sign,omitempty"`
+	// Issuer represents the DID of the issuer for the schema if it's signed. Required if sign is true.
+	// Issuer string `json:"issuer,omitempty"`
+	// IssuerKID represents the KID of the issuer's private key to sign the schema. Required if sign is true.
+	// IssuerKID string `json:"issuerKid,omitempty"`
 }
 
 type CreateSchemaResponse struct {
-	ID        string                 `json:"id"`
-	Schema    schemalib.VCJSONSchema `json:"schema"`
-	SchemaJWT *keyaccess.JWT         `json:"schemaJwt,omitempty"`
+	ID               string               `json:"id"`
+	Schema           schemalib.JSONSchema `json:"schema"`
+	CredentialSchema *keyaccess.JWT       `json:"credentialSchema,omitempty"`
 }
 
 // CreateSchema godoc
 //
-//	@Summary		Create SchemaID
+//	@Summary		Create Schema
 //	@Description	Create schema
 //	@Tags			SchemaAPI
 //	@Accept			json
@@ -59,36 +67,46 @@ type CreateSchemaResponse struct {
 //	@Failure		400		{string}	string	"Bad request"
 //	@Failure		500		{string}	string	"Internal server error"
 //	@Router			/v1/schemas [put]
-func (sr SchemaRouter) CreateSchema(c *gin.Context) error {
+func (sr SchemaRouter) CreateSchema(c *gin.Context) {
 	var request CreateSchemaRequest
 	invalidCreateSchemaRequest := "invalid create schema request"
 	if err := framework.Decode(c.Request, &request); err != nil {
-		return framework.LoggingRespondErrWithMsg(c, err, invalidCreateSchemaRequest, http.StatusBadRequest)
+		framework.LoggingRespondErrWithMsg(c, err, invalidCreateSchemaRequest, http.StatusBadRequest)
+		return
 	}
 
 	if err := framework.ValidateRequest(request); err != nil {
-		return framework.LoggingRespondErrWithMsg(c, err, invalidCreateSchemaRequest, http.StatusBadRequest)
+		framework.LoggingRespondErrWithMsg(c, err, invalidCreateSchemaRequest, http.StatusBadRequest)
+		return
 	}
 
-	if request.Sign && request.AuthorKID == "" {
-		errMsg := "cannot sign schema without authorKID"
-		return framework.LoggingRespondErrMsg(c, errMsg, http.StatusBadRequest)
-	}
+	// if request.Sign && (request.Issuer == "" || request.IssuerKID == "") {
+	// 	errMsg := "cannot sign schema without an issuer DID and KID"
+	// 	framework.LoggingRespondErrMsg(c, errMsg, http.StatusBadRequest)
+	// 	return
+	// }
 
-	req := schema.CreateSchemaRequest{Author: request.Author, AuthorKID: request.AuthorKID, Name: request.Name, Schema: request.Schema, Sign: request.Sign}
+	req := schema.CreateSchemaRequest{
+		Name:        request.Name,
+		Description: request.Description,
+		Schema:      request.Schema,
+		// Sign:        request.Sign,
+		// Issuer:      request.Issuer,
+		// IssuerKID:   request.IssuerKID,
+	}
 	createSchemaResponse, err := sr.service.CreateSchema(c, req)
 	if err != nil {
-		errMsg := fmt.Sprintf("could not create schema with authoring DID<%s> and KID<%s>", request.Author, request.AuthorKID)
-		return framework.LoggingRespondErrWithMsg(c, err, errMsg, http.StatusInternalServerError)
+		framework.LoggingRespondErrWithMsg(c, err, "could not create schema", http.StatusInternalServerError)
+		return
 	}
 
-	resp := CreateSchemaResponse{ID: createSchemaResponse.ID, Schema: createSchemaResponse.Schema, SchemaJWT: createSchemaResponse.SchemaJWT}
-	return framework.Respond(c, resp, http.StatusCreated)
+	resp := CreateSchemaResponse{ID: createSchemaResponse.ID, Schema: createSchemaResponse.Schema}
+	framework.Respond(c, resp, http.StatusCreated)
 }
 
 // GetSchema godoc
 //
-//	@Summary		Get SchemaID
+//	@Summary		Get Schema
 //	@Description	Get a schema by its ID
 //	@Tags			SchemaAPI
 //	@Accept			json
@@ -97,43 +115,47 @@ func (sr SchemaRouter) CreateSchema(c *gin.Context) error {
 //	@Success		200	{object}	GetSchemaResponse
 //	@Failure		400	{string}	string	"Bad request"
 //	@Router			/v1/schemas/{id} [get]
-func (sr SchemaRouter) GetSchema(c *gin.Context) error {
+func (sr SchemaRouter) GetSchema(c *gin.Context) {
 	id := framework.GetParam(c, IDParam)
 	if id == nil {
 		errMsg := "cannot get schema without ID parameter"
-		return framework.LoggingRespondErrMsg(c, errMsg, http.StatusBadRequest)
+		framework.LoggingRespondErrMsg(c, errMsg, http.StatusBadRequest)
+		return
 	}
 
 	// TODO(gabe) differentiate between internal errors and not found schemas
 	gotSchema, err := sr.service.GetSchema(c, schema.GetSchemaRequest{ID: *id})
 	if err != nil {
 		errMsg := fmt.Sprintf("could not get schema with id: %s", *id)
-		return framework.LoggingRespondErrWithMsg(c, err, errMsg, http.StatusInternalServerError)
+		framework.LoggingRespondErrWithMsg(c, err, errMsg, http.StatusInternalServerError)
+		return
 	}
 
-	resp := GetSchemaResponse{Schema: gotSchema.Schema, SchemaJWT: gotSchema.SchemaJWT}
-	return framework.Respond(c, resp, http.StatusOK)
+	resp := GetSchemaResponse{Schema: gotSchema.Schema}
+	framework.Respond(c, resp, http.StatusOK)
+	return
 }
 
-type GetSchemasResponse struct {
+type ListSchemasResponse struct {
 	Schemas []GetSchemaResponse `json:"schemas,omitempty"`
 }
 
-// GetSchemas godoc
+// ListSchemas godoc
 //
-//	@Summary		Get Schemas
-//	@Description	Get schemas
+//	@Summary		List Schemas
+//	@Description	List schemas
 //	@Tags			SchemaAPI
 //	@Accept			json
 //	@Produce		json
-//	@Success		200	{object}	GetSchemasResponse
+//	@Success		200	{object}	ListSchemasResponse
 //	@Failure		500	{string}	string	"Internal server error"
 //	@Router			/v1/schemas [get]
-func (sr SchemaRouter) GetSchemas(c *gin.Context) error {
-	gotSchemas, err := sr.service.GetSchemas(c)
+func (sr SchemaRouter) ListSchemas(c *gin.Context) {
+	gotSchemas, err := sr.service.ListSchemas(c)
 	if err != nil {
-		errMsg := "could not get schemas"
-		return framework.LoggingRespondErrWithMsg(c, err, errMsg, http.StatusInternalServerError)
+		errMsg := "could not list schemas"
+		framework.LoggingRespondErrWithMsg(c, err, errMsg, http.StatusInternalServerError)
+		return
 	}
 
 	schemas := make([]GetSchemaResponse, 0, len(gotSchemas.Schemas))
@@ -141,55 +163,18 @@ func (sr SchemaRouter) GetSchemas(c *gin.Context) error {
 		schemas = append(schemas, GetSchemaResponse{Schema: s.Schema})
 	}
 
-	resp := GetSchemasResponse{Schemas: schemas}
-	return framework.Respond(c, resp, http.StatusOK)
+	resp := ListSchemasResponse{Schemas: schemas}
+	framework.Respond(c, resp, http.StatusOK)
 }
 
 type GetSchemaResponse struct {
-	Schema    schemalib.VCJSONSchema `json:"schema,omitempty"`
-	SchemaJWT *keyaccess.JWT         `json:"schemaJwt,omitempty"`
-}
-
-type VerifySchemaRequest struct {
-	SchemaJWT keyaccess.JWT `json:"schemaJwt" validate:"required"`
-}
-
-type VerifySchemaResponse struct {
-	Verified bool   `json:"verified" validate:"required"`
-	Reason   string `json:"reason,omitempty"`
-}
-
-// VerifySchema godoc
-//
-//	@Summary		Verify SchemaID
-//	@Description	Verify a given schema by its id
-//	@Tags			SchemaAPI
-//	@Accept			json
-//	@Produce		json
-//	@Param			request	body		VerifySchemaRequest	true	"request body"
-//	@Success		200		{object}	VerifySchemaResponse
-//	@Failure		400		{string}	string	"Bad request"
-//	@Router			/v1/schemas/verification [put]
-func (sr SchemaRouter) VerifySchema(c *gin.Context) error {
-	var request VerifySchemaRequest
-	if err := framework.Decode(c.Request, &request); err != nil {
-		errMsg := "invalid verify schema request"
-		return framework.LoggingRespondErrWithMsg(c, err, errMsg, http.StatusBadRequest)
-	}
-
-	verificationResult, err := sr.service.VerifySchema(c, schema.VerifySchemaRequest{SchemaJWT: request.SchemaJWT})
-	if err != nil {
-		errMsg := "could not verify schema"
-		return framework.LoggingRespondErrWithMsg(c, err, errMsg, http.StatusInternalServerError)
-	}
-
-	resp := VerifySchemaResponse{Verified: verificationResult.Verified, Reason: verificationResult.Reason}
-	return framework.Respond(c, resp, http.StatusOK)
+	Schema           schemalib.JSONSchema `json:"schema,omitempty"`
+	CredentialSchema *keyaccess.JWT       `json:"credentialSchema,omitempty"`
 }
 
 // DeleteSchema godoc
 //
-//	@Summary		Delete SchemaID
+//	@Summary		Delete Schema
 //	@Description	Delete a schema by its ID
 //	@Tags			SchemaAPI
 //	@Accept			json
@@ -199,17 +184,19 @@ func (sr SchemaRouter) VerifySchema(c *gin.Context) error {
 //	@Failure		400	{string}	string	"Bad request"
 //	@Failure		500	{string}	string	"Internal server error"
 //	@Router			/v1/schemas/{id} [delete]
-func (sr SchemaRouter) DeleteSchema(c *gin.Context) error {
+func (sr SchemaRouter) DeleteSchema(c *gin.Context) {
 	id := framework.GetParam(c, IDParam)
 	if id == nil {
 		errMsg := "cannot delete a schema without an ID parameter"
-		return framework.LoggingRespondErrMsg(c, errMsg, http.StatusBadRequest)
+		framework.LoggingRespondErrMsg(c, errMsg, http.StatusBadRequest)
+		return
 	}
 
 	if err := sr.service.DeleteSchema(c, schema.DeleteSchemaRequest{ID: *id}); err != nil {
 		errMsg := fmt.Sprintf("could not delete schema with id: %s", *id)
-		return framework.LoggingRespondErrWithMsg(c, err, errMsg, http.StatusInternalServerError)
+		framework.LoggingRespondErrWithMsg(c, err, errMsg, http.StatusInternalServerError)
+		return
 	}
 
-	return framework.Respond(c, nil, http.StatusNoContent)
+	framework.Respond(c, nil, http.StatusNoContent)
 }

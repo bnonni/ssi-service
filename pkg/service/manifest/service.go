@@ -15,9 +15,11 @@ import (
 
 	"github.com/tbd54566975/ssi-service/config"
 	credint "github.com/tbd54566975/ssi-service/internal/credential"
+	"github.com/tbd54566975/ssi-service/internal/keyaccess"
+	"github.com/tbd54566975/ssi-service/pkg/service/common"
 	"github.com/tbd54566975/ssi-service/pkg/service/credential"
 	"github.com/tbd54566975/ssi-service/pkg/service/framework"
-	"github.com/tbd54566975/ssi-service/pkg/service/issuing"
+	"github.com/tbd54566975/ssi-service/pkg/service/issuance"
 	"github.com/tbd54566975/ssi-service/pkg/service/keystore"
 	"github.com/tbd54566975/ssi-service/pkg/service/manifest/model"
 	manifeststg "github.com/tbd54566975/ssi-service/pkg/service/manifest/storage"
@@ -27,10 +29,12 @@ import (
 	"github.com/tbd54566975/ssi-service/pkg/storage"
 )
 
+const requestNamespace = "manifest_request"
+
 type Service struct {
 	storage                 *manifeststg.Storage
 	opsStorage              *operation.Storage
-	issuanceTemplateStorage *issuing.Storage
+	issuanceTemplateStorage *issuance.Storage
 	config                  config.ManifestServiceConfig
 
 	// external dependencies
@@ -38,7 +42,8 @@ type Service struct {
 	didResolver resolution.Resolver
 	credential  *credential.Service
 
-	Clock clock.Clock
+	Clock      clock.Clock
+	reqStorage common.RequestStorage
 }
 
 func (s Service) Type() framework.Type {
@@ -82,19 +87,21 @@ func NewManifestService(config config.ManifestServiceConfig, s storage.ServiceSt
 	if err != nil {
 		return nil, sdkutil.LoggingErrorMsg(err, "could not instantiate storage for the operations")
 	}
-	issuingStorage, err := issuing.NewIssuingStorage(s)
+	issuanceStorage, err := issuance.NewIssuanceStorage(s)
 	if err != nil {
 		return nil, sdkutil.LoggingErrorMsg(err, "could not instantiate storage for issuance templates")
 	}
+	requestStorage := common.NewRequestStorage(s, requestNamespace)
 	return &Service{
 		storage:                 manifestStorage,
 		opsStorage:              opsStorage,
-		issuanceTemplateStorage: issuingStorage,
+		issuanceTemplateStorage: issuanceStorage,
 		config:                  config,
 		keyStore:                keyStore,
 		didResolver:             didResolver,
 		credential:              credential,
 		Clock:                   clock.New(),
+		reqStorage:              requestStorage,
 	}, nil
 }
 
@@ -165,19 +172,12 @@ func (s Service) CreateManifest(ctx context.Context, request model.CreateManifes
 		return nil, sdkutil.LoggingErrorMsg(err, "could not build manifest")
 	}
 
-	// sign the manifest
-	manifestJWT, err := s.signManifestJWT(ctx, request.IssuerKID, CredentialManifestContainer{Manifest: *m})
-	if err != nil {
-		return nil, sdkutil.LoggingErrorMsg(err, "could not sign manifest")
-	}
-
 	// store the manifest
 	storageRequest := manifeststg.StoredManifest{
-		ID:          m.ID,
-		IssuerDID:   m.Issuer.ID,
-		IssuerKID:   request.IssuerKID,
-		Manifest:    *m,
-		ManifestJWT: *manifestJWT,
+		ID:        m.ID,
+		IssuerDID: m.Issuer.ID,
+		IssuerKID: request.IssuerKID,
+		Manifest:  *m,
 	}
 
 	if err = s.storage.StoreManifest(ctx, storageRequest); err != nil {
@@ -185,7 +185,7 @@ func (s Service) CreateManifest(ctx context.Context, request model.CreateManifes
 	}
 
 	// return the result
-	response := model.CreateManifestResponse{Manifest: *m, ManifestJWT: *manifestJWT}
+	response := model.CreateManifestResponse{Manifest: *m}
 	return &response, nil
 }
 
@@ -214,23 +214,23 @@ func (s Service) GetManifest(ctx context.Context, request model.GetManifestReque
 		return nil, sdkutil.LoggingErrorMsgf(err, "could not get manifest: %s", request.ID)
 	}
 
-	response := model.GetManifestResponse{Manifest: gotManifest.Manifest, ManifestJWT: gotManifest.ManifestJWT}
+	response := model.GetManifestResponse{Manifest: gotManifest.Manifest}
 	return &response, nil
 }
 
-func (s Service) GetManifests(ctx context.Context) (*model.GetManifestsResponse, error) {
-	gotManifests, err := s.storage.GetManifests(ctx)
+func (s Service) ListManifests(ctx context.Context) (*model.ListManifestsResponse, error) {
+	gotManifests, err := s.storage.ListManifests(ctx)
 
 	if err != nil {
-		return nil, sdkutil.LoggingErrorMsg(err, "could not get manifests(s)")
+		return nil, sdkutil.LoggingErrorMsg(err, "could not list manifests(s)")
 	}
 
 	manifests := make([]model.GetManifestResponse, 0, len(gotManifests))
 	for _, m := range gotManifests {
-		response := model.GetManifestResponse{Manifest: m.Manifest, ManifestJWT: m.ManifestJWT}
+		response := model.GetManifestResponse{Manifest: m.Manifest}
 		manifests = append(manifests, response)
 	}
-	response := model.GetManifestsResponse{Manifests: manifests}
+	response := model.ListManifestsResponse{Manifests: manifests}
 	return &response, nil
 }
 
@@ -262,12 +262,10 @@ func (s Service) ProcessApplicationSubmission(ctx context.Context, request model
 	gotManifest, err := s.storage.GetManifest(ctx, manifestID)
 	applicationID := request.Application.ID
 	if err != nil {
-		return nil, sdkutil.LoggingErrorMsgf(err,
-			"problem with retrieving manifest<%s> during application<%s>'s validation", manifestID, applicationID)
+		return nil, sdkutil.LoggingErrorMsgf(err, "problem with retrieving manifest<%s> during application<%s>'s validation", manifestID, applicationID)
 	}
 	if gotManifest == nil {
-		return nil, sdkutil.LoggingNewErrorf(
-			"application<%s> is not valid; a manifest does not exist with id: %s", applicationID, manifestID)
+		return nil, sdkutil.LoggingNewErrorf("application<%s> is not valid; a manifest does not exist with id: %s", applicationID, manifestID)
 	}
 
 	opID := opcredential.IDFromResponseID(applicationID)
@@ -345,7 +343,7 @@ func (s Service) attemptAutomaticIssuance(ctx context.Context, request model.Sub
 
 	issuanceTemplate := issuanceTemplates[0].IssuanceTemplate
 	if len(issuanceTemplates) > 1 {
-		logrus.Warnf("found multiple issuance templates for manifest<%s>, using first entry only", manifestID)
+		logrus.Warnf("found issuance issuance templates for manifest<%s>, using first entry only", manifestID)
 	}
 
 	credResp, creds, err := s.buildFulfillmentCredentialResponseFromTemplate(ctx, applicantDID, manifestID, gotManifest.IssuerKID,
@@ -371,7 +369,7 @@ func (s Service) attemptAutomaticIssuance(ctx context.Context, request model.Sub
 		ResponseJWT:  *responseJWT,
 	}
 	_, storedOp, err := s.storage.StoreReviewApplication(ctx, applicationID, true,
-		"automatic from issuing template", opcredential.IDFromResponseID(applicationID), storedResponse)
+		"automatic from issuance template", opcredential.IDFromResponseID(applicationID), storedResponse)
 	if err != nil {
 		return nil, errors.Wrap(err, "reviewing application")
 	}
@@ -459,12 +457,12 @@ func (s Service) GetApplication(ctx context.Context, request model.GetApplicatio
 	return &response, nil
 }
 
-func (s Service) GetApplications(ctx context.Context) (*model.GetApplicationsResponse, error) {
-	logrus.Debugf("getting application(s)")
+func (s Service) ListApplications(ctx context.Context) (*model.ListApplicationsResponse, error) {
+	logrus.Debugf("listing application(s)")
 
-	gotApps, err := s.storage.GetApplications(ctx)
+	gotApps, err := s.storage.ListApplications(ctx)
 	if err != nil {
-		return nil, sdkutil.LoggingErrorMsg(err, "could not get application(s)")
+		return nil, sdkutil.LoggingErrorMsg(err, "could not list application(s)")
 	}
 
 	apps := make([]manifest.CredentialApplication, 0, len(gotApps))
@@ -472,7 +470,7 @@ func (s Service) GetApplications(ctx context.Context) (*model.GetApplicationsRes
 		apps = append(apps, cred.Application)
 	}
 
-	response := model.GetApplicationsResponse{Applications: apps}
+	response := model.ListApplicationsResponse{Applications: apps}
 	return &response, nil
 }
 
@@ -502,12 +500,12 @@ func (s Service) GetResponse(ctx context.Context, request model.GetResponseReque
 	return &response, nil
 }
 
-func (s Service) GetResponses(ctx context.Context) (*model.GetResponsesResponse, error) {
-	logrus.Debugf("getting response(s)")
+func (s Service) ListResponses(ctx context.Context) (*model.ListResponsesResponse, error) {
+	logrus.Debugf("listing responses")
 
-	gotResponses, err := s.storage.GetResponses(ctx)
+	gotResponses, err := s.storage.ListResponses(ctx)
 	if err != nil {
-		return nil, sdkutil.LoggingErrorMsg(err, "could not get response(s)")
+		return nil, sdkutil.LoggingErrorMsg(err, "could not list responses")
 	}
 
 	responses := make([]manifest.CredentialResponse, 0, len(gotResponses))
@@ -515,7 +513,7 @@ func (s Service) GetResponses(ctx context.Context) (*model.GetResponsesResponse,
 		responses = append(responses, res.Response)
 	}
 
-	response := model.GetResponsesResponse{Responses: responses}
+	response := model.ListResponsesResponse{Responses: responses}
 	return &response, nil
 }
 
@@ -527,4 +525,84 @@ func (s Service) DeleteResponse(ctx context.Context, request model.DeleteRespons
 	}
 
 	return nil
+}
+
+func (s Service) CreateRequest(ctx context.Context, req model.CreateRequestRequest) (*model.Request, error) {
+	if err := sdkutil.IsValidStruct(req); err != nil {
+		return nil, err
+	}
+
+	request := req.ManifestRequest
+	storedManifest, err := s.storage.GetManifest(ctx, request.ManifestID)
+	if err != nil {
+		return nil, errors.Wrap(err, "getting credential manifest")
+	}
+	if storedManifest == nil {
+		return nil, errors.Errorf("credential manifest %q is nil", request.ManifestID)
+	}
+
+	claimName := "credential_manifest"
+	claimValue := storedManifest.Manifest
+
+	stored, err := common.CreateStoredRequest(ctx, s.keyStore, claimName, claimValue, request.Request, request.ManifestID)
+	if err != nil {
+		return nil, errors.Wrap(err, "creating stored request")
+	}
+	if err := s.reqStorage.StoreRequest(ctx, *stored); err != nil {
+		return nil, errors.Wrap(err, "storing request")
+	}
+	return serviceModel(stored)
+}
+
+func (s Service) ListRequests(ctx context.Context) (*model.ListRequestsResponse, error) {
+	requests, err := s.reqStorage.ListRequests(ctx)
+	if err != nil {
+		return nil, errors.Wrap(err, "listing from storage")
+	}
+	reqs := make([]model.Request, 0, len(requests))
+	for _, storedReq := range requests {
+		storedReq := storedReq
+		r, err := serviceModel(&storedReq)
+		if err != nil {
+			return nil, err
+		}
+		reqs = append(reqs, *r)
+	}
+	return &model.ListRequestsResponse{ManifestRequests: reqs}, nil
+}
+
+func (s Service) GetRequest(ctx context.Context, request *model.GetRequestRequest) (*model.Request, error) {
+	logrus.Debugf("getting manifest request: %s", request.ID)
+
+	storedRequest, err := s.reqStorage.GetRequest(ctx, request.ID)
+	if err != nil {
+		return nil, errors.Wrapf(err, "getting signed document with id: %s", request.ID)
+	}
+	if storedRequest == nil {
+		return nil, sdkutil.LoggingNewErrorf("manifest request with id<%s> could not be found", request.ID)
+	}
+
+	return serviceModel(storedRequest)
+}
+
+func (s Service) DeleteRequest(ctx context.Context, request model.DeleteRequestRequest) error {
+	logrus.Debugf("deleting manifest request: %s", request.ID)
+
+	if err := s.reqStorage.DeleteRequest(ctx, request.ID); err != nil {
+		return sdkutil.LoggingNewErrorf("could not delete manifest request with id: %s", request.ID)
+	}
+
+	return nil
+}
+
+func serviceModel(stored *common.StoredRequest) (*model.Request, error) {
+	req, err := common.ToServiceModel(stored)
+	if err != nil {
+		return nil, err
+	}
+	return &model.Request{
+		Request:               *req,
+		ManifestID:            stored.ReferenceID,
+		CredentialManifestJWT: keyaccess.JWT(stored.JWT),
+	}, nil
 }

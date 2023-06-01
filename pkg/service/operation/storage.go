@@ -99,7 +99,7 @@ func (s Storage) GetOperation(ctx context.Context, id string) (opstorage.StoredO
 	return stored, nil
 }
 
-func (s Storage) GetOperations(ctx context.Context, parent string, filter filtering.Filter) ([]opstorage.StoredOperation, error) {
+func (s Storage) ListOperations(ctx context.Context, parent string, filter filtering.Filter) ([]opstorage.StoredOperation, error) {
 	operations, err := s.db.ReadAll(ctx, namespace.FromParent(parent))
 	if err != nil {
 		return nil, sdkutil.LoggingErrorMsgf(err, "could not get all operations")
@@ -133,7 +133,7 @@ func (s Storage) DeleteOperation(ctx context.Context, id string) error {
 
 func NewOperationStorage(db storage.ServiceStorage) (*Storage, error) {
 	if db == nil {
-		return nil, errors.New("bolt db reference is nil")
+		return nil, errors.New("db reference is nil")
 	}
 	return &Storage{db: db}, nil
 }
