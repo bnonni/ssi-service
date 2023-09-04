@@ -5,7 +5,9 @@ import (
 
 	"github.com/TBD54566975/ssi-sdk/crypto"
 	didsdk "github.com/TBD54566975/ssi-sdk/did"
+	"github.com/TBD54566975/ssi-sdk/did/ion"
 	"github.com/TBD54566975/ssi-sdk/did/resolution"
+	"github.com/tbd54566975/ssi-service/pkg/service/common"
 )
 
 type GetSupportedMethodsResponse struct {
@@ -38,6 +40,14 @@ type CreateDIDResponse struct {
 	DID didsdk.Document `json:"did"`
 }
 
+type BatchCreateDIDsRequest struct {
+	Requests []CreateDIDRequest `json:"requests"`
+}
+
+type BatchCreateDIDsResponse struct {
+	DIDs []didsdk.Document `json:"dids"`
+}
+
 type GetDIDRequest struct {
 	Method didsdk.Method `json:"method" validate:"required"`
 	ID     string        `json:"id" validate:"required"`
@@ -61,14 +71,40 @@ type GetKeyFromDIDResponse struct {
 type ListDIDsRequest struct {
 	Method  didsdk.Method `json:"method" validate:"required"`
 	Deleted bool          `json:"deleted"`
+
+	PageRequest *common.Page
 }
 
 // ListDIDsResponse is the JSON-serializable response for getting all DIDs for a given method
 type ListDIDsResponse struct {
-	DIDs []didsdk.Document `json:"dids"`
+	DIDs          []didsdk.Document `json:"dids"`
+	NextPageToken string
 }
 
 type DeleteDIDRequest struct {
 	Method didsdk.Method `json:"method" validate:"required"`
 	ID     string        `json:"id" validate:"required"`
 }
+
+type UpdateIONDIDRequest struct {
+	DID ion.ION `json:"did"`
+
+	StateChange ion.StateChange `json:"stateChange"`
+}
+
+type UpdateIONDIDResponse struct {
+	DID didsdk.Document `json:"did"`
+}
+
+type UpdateRequestStatus string
+
+func (s UpdateRequestStatus) Bytes() []byte {
+	return []byte(s)
+}
+
+const (
+	PreAnchorStatus   UpdateRequestStatus = "pre-anchor"
+	AnchorErrorStatus UpdateRequestStatus = "anchor-error"
+	AnchoredStatus    UpdateRequestStatus = "anchored"
+	DoneStatus        UpdateRequestStatus = "done"
+)

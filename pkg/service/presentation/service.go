@@ -4,17 +4,17 @@ import (
 	"context"
 	"fmt"
 
-	credsdk "github.com/TBD54566975/ssi-sdk/credential"
 	"github.com/TBD54566975/ssi-sdk/credential/exchange"
+	"github.com/TBD54566975/ssi-sdk/credential/integrity"
 	"github.com/TBD54566975/ssi-sdk/did/resolution"
 	sdkutil "github.com/TBD54566975/ssi-sdk/util"
 	"github.com/lestrrat-go/jwx/jws"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
-	"github.com/tbd54566975/ssi-service/config"
-	"github.com/tbd54566975/ssi-service/internal/credential"
+
 	didint "github.com/tbd54566975/ssi-service/internal/did"
 	"github.com/tbd54566975/ssi-service/internal/keyaccess"
+	"github.com/tbd54566975/ssi-service/internal/verification"
 	"github.com/tbd54566975/ssi-service/pkg/service/common"
 	"github.com/tbd54566975/ssi-service/pkg/service/framework"
 	"github.com/tbd54566975/ssi-service/pkg/service/keystore"
@@ -27,14 +27,16 @@ import (
 	"github.com/tbd54566975/ssi-service/pkg/storage"
 )
 
+const presentationRequestNamespace = "presentation_request"
+
 type Service struct {
 	storage    presentationstorage.Storage
 	keystore   *keystore.Service
 	opsStorage *operation.Storage
-	config     config.PresentationServiceConfig
 	resolver   resolution.Resolver
 	schema     *schema.Service
-	verifier   *credential.Verifier
+	verifier   *verification.Verifier
+	reqStorage common.RequestStorage
 }
 
 func (s Service) Type() framework.Type {
@@ -55,11 +57,7 @@ func (s Service) Status() framework.Status {
 	return framework.Status{Status: framework.StatusReady}
 }
 
-func (s Service) Config() config.PresentationServiceConfig {
-	return s.config
-}
-
-func NewPresentationService(config config.PresentationServiceConfig, s storage.ServiceStorage,
+func NewPresentationService(s storage.ServiceStorage,
 	resolver resolution.Resolver, schema *schema.Service, keystore *keystore.Service) (*Service, error) {
 	presentationStorage, err := NewPresentationStorage(s)
 	if err != nil {
@@ -69,23 +67,55 @@ func NewPresentationService(config config.PresentationServiceConfig, s storage.S
 	if err != nil {
 		return nil, sdkutil.LoggingErrorMsg(err, "could not instantiate storage for the operations")
 	}
-	verifier, err := credential.NewCredentialVerifier(resolver, schema)
+	verifier, err := verification.NewVerifiableDataVerifier(resolver, schema)
 	if err != nil {
 		return nil, sdkutil.LoggingErrorMsg(err, "could not instantiate verifier")
 	}
+	requestStorage := common.NewRequestStorage(s, presentationRequestNamespace)
 	service := Service{
 		storage:    presentationStorage,
 		keystore:   keystore,
 		opsStorage: opsStorage,
-		config:     config,
 		resolver:   resolver,
 		schema:     schema,
 		verifier:   verifier,
+		reqStorage: requestStorage,
 	}
 	if !service.Status().IsReady() {
 		return nil, errors.New(service.Status().Message)
 	}
 	return &service, nil
+}
+
+type VerifyPresentationRequest struct {
+	PresentationJWT *keyaccess.JWT `json:"presentationJwt,omitempty" validate:"required"`
+}
+
+type VerifyPresentationResponse struct {
+	Verified bool   `json:"verified"`
+	Reason   string `json:"reason,omitempty"`
+}
+
+// VerifyPresentation does a series of verification on a presentation:
+//  1. Makes sure the presentation has a valid signature
+//  2. Makes sure the presentation is not expired
+//  3. Makes sure the presentation complies with the VC Data Model v1.1
+//  4. For each verification in the presentation, makes sure:
+//     a. Makes sure the verification has a valid signature
+//     b. Makes sure the verification is not expired
+//     c. Makes sure the verification complies with the VC Data Model
+func (s Service) VerifyPresentation(ctx context.Context, request VerifyPresentationRequest) (*VerifyPresentationResponse, error) {
+	logrus.Debugf("verifying presentation: %+v", request)
+
+	if err := sdkutil.IsValidStruct(request); err != nil {
+		return nil, sdkutil.LoggingErrorMsg(err, "invalid verify presentation request")
+	}
+
+	if err := s.verifier.VerifyJWTPresentation(ctx, *request.PresentationJWT); err != nil {
+		return &VerifyPresentationResponse{Verified: false, Reason: err.Error()}, nil
+	}
+
+	return &VerifyPresentationResponse{Verified: true}, nil
 }
 
 // CreatePresentationDefinition houses the main service logic for presentation definition creation. It validates the input, and
@@ -132,6 +162,23 @@ func (s Service) GetPresentationDefinition(ctx context.Context,
 	}, nil
 }
 
+func (s Service) ListRequests(ctx context.Context) (*model.ListRequestsResponse, error) {
+	requests, err := s.reqStorage.ListRequests(ctx)
+	if err != nil {
+		return nil, errors.Wrap(err, "listing from storage")
+	}
+	reqs := make([]model.Request, 0, len(requests))
+	for _, storedReq := range requests {
+		storedReq := storedReq
+		r, err := serviceModel(&storedReq)
+		if err != nil {
+			return nil, err
+		}
+		reqs = append(reqs, *r)
+	}
+	return &model.ListRequestsResponse{PresentationRequests: reqs}, nil
+}
+
 func (s Service) DeletePresentationDefinition(ctx context.Context, request model.DeletePresentationDefinitionRequest) error {
 	logrus.Debugf("deleting presentation definition: %s", request.ID)
 
@@ -153,7 +200,7 @@ func (s Service) CreateSubmission(ctx context.Context, request model.CreateSubmi
 		return nil, errors.Wrap(err, "provided value is not a valid presentation submission")
 	}
 
-	headers, _, vp, err := credsdk.ParseVerifiablePresentationFromJWT(request.SubmissionJWT.String())
+	headers, _, vp, err := integrity.ParseVerifiablePresentationFromJWT(request.SubmissionJWT.String())
 	if err != nil {
 		return nil, errors.Wrap(err, "parsing vp from jwt")
 	}
@@ -247,13 +294,16 @@ func (s Service) GetSubmission(ctx context.Context, request model.GetSubmissionR
 func (s Service) ListSubmissions(ctx context.Context, request model.ListSubmissionRequest) (*model.ListSubmissionResponse, error) {
 	logrus.Debug("listing presentation submissions")
 
-	subs, err := s.storage.ListSubmissions(ctx, request.Filter)
+	subs, err := s.storage.ListSubmissions(ctx, request.Filter, *request.PageRequest.ToServicePage())
 	if err != nil {
 		return nil, errors.Wrap(err, "fetching submissions from storage")
 	}
 
-	resp := &model.ListSubmissionResponse{Submissions: make([]model.Submission, 0, len(subs))}
-	for _, sub := range subs {
+	resp := &model.ListSubmissionResponse{
+		Submissions:   make([]model.Submission, 0, len(subs.Submissions)),
+		NextPageToken: subs.NextPageToken,
+	}
+	for _, sub := range subs.Submissions {
 		sub := sub // What's this?? see https://github.com/golang/go/wiki/CommonMistakes#using-reference-to-loop-iterator-variable
 		resp.Submissions = append(resp.Submissions, model.ServiceModel(&sub))
 	}
@@ -319,7 +369,7 @@ func (s Service) CreateRequest(ctx context.Context, req model.CreateRequestReque
 	if err != nil {
 		return nil, errors.Wrap(err, "creating stored request")
 	}
-	if err := s.storage.StoreRequest(ctx, *stored); err != nil {
+	if err := s.reqStorage.StoreRequest(ctx, *stored); err != nil {
 		return nil, errors.Wrap(err, "storing signed document")
 	}
 	return serviceModel(stored)
@@ -328,7 +378,7 @@ func (s Service) CreateRequest(ctx context.Context, req model.CreateRequestReque
 func (s Service) GetRequest(ctx context.Context, request *model.GetRequestRequest) (*model.Request, error) {
 	logrus.Debugf("getting presentation request: %s", request.ID)
 
-	storedRequest, err := s.storage.GetRequest(ctx, request.ID)
+	storedRequest, err := s.reqStorage.GetRequest(ctx, request.ID)
 	if err != nil {
 		return nil, errors.Wrapf(err, "getting signed document with id: %s", request.ID)
 	}
@@ -342,7 +392,7 @@ func (s Service) GetRequest(ctx context.Context, request *model.GetRequestReques
 func (s Service) DeleteRequest(ctx context.Context, request model.DeleteRequestRequest) error {
 	logrus.Debugf("deleting presentation request: %s", request.ID)
 
-	if err := s.storage.DeleteRequest(ctx, request.ID); err != nil {
+	if err := s.reqStorage.DeleteRequest(ctx, request.ID); err != nil {
 		return sdkutil.LoggingNewErrorf("could not delete presentation request with id: %s", request.ID)
 	}
 

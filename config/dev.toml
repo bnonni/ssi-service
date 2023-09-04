@@ -1,8 +1,3 @@
-title = "SSI Service Config"
-
-svn = "0.0.1"
-desc = "Default configuration to be used while running the service for testing as a single go process."
-
 # http service configuration
 [server]
 env = "dev" # either 'dev', 'test', or 'prod'
@@ -29,38 +24,24 @@ service_endpoint = "http://localhost:3000"
 # example bolt config with filepath option
 storage = "bolt"
 
+[services.storage_encryption]
+# encryption
+disable_encryption = true
+
 [[services.storage_option]]
 id = "boltdb-filepath-option"
 option = "bolt.db"
 
-# per-service configuration
-[services.keystore]
-name = "keystore"
-password = "default-password"
-
 [services.did]
-name = "did"
 methods = ["key", "web"]
-local_resolution_methods = ["key", "web", "pkh", "peer"]
+local_resolution_methods = ["ion", "key", "web", "pkh", "peer"]
 universal_resolver_url = "https://dev.uniresolver.io/"
 universal_resolver_methods = ["ion"]
-
-[services.schema]
-name = "schema"
+batch_create_max_items = 100
 
 [services.credential]
-name = "credential"
-
-[services.issuance]
-name = "issuance"
-
-[services.manifest]
-name = "manifest"
-
-[services.presentation]
-name = "presentation"
-expiration_duration = "30m"
+batch_create_max_items = 100
+batch_update_status_max_items = 100
 
 [services.webhook]
-name = "webhook"
 webhook_timeout = "10s"

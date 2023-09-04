@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/pkg/errors"
 
+	"github.com/tbd54566975/ssi-service/config"
 	credint "github.com/tbd54566975/ssi-service/internal/credential"
 	"github.com/tbd54566975/ssi-service/pkg/storage"
 )
@@ -18,7 +19,7 @@ import (
 func (s Service) createStatusListEntryForCredential(ctx context.Context, credID string, request CreateCredentialRequest,
 	tx storage.Tx, statusMetadata StatusListCredentialMetadata) (*statussdk.StatusList2021Entry, error) {
 	issuerID := request.Issuer
-	issuerKID := request.IssuerKID
+	fullyQualifiedVerificationMethodID := request.FullyQualifiedVerificationMethodID
 	schemaID := request.SchemaID
 
 	statusPurpose := statussdk.StatusRevocation
@@ -37,7 +38,7 @@ func (s Service) createStatusListEntryForCredential(ctx context.Context, credID 
 
 	if statusListCredential == nil {
 		// creates status list credential with random index
-		randomIndex, statusCred, err = s.createStatusListCredential(ctx, tx, statusPurpose, issuerID, issuerKID, statusMetadata)
+		randomIndex, statusCred, err = s.createStatusListCredential(ctx, tx, statusPurpose, issuerID, fullyQualifiedVerificationMethodID, statusMetadata)
 		if err != nil {
 			return nil, sdkutil.LoggingErrorMsgf(err, "problem with getting status list credential")
 		}
@@ -55,33 +56,34 @@ func (s Service) createStatusListEntryForCredential(ctx context.Context, credID 
 		}
 	}
 
+	indexStr := strconv.Itoa(randomIndex)
 	return &statussdk.StatusList2021Entry{
-		ID:                   fmt.Sprintf(`%s/%s/status`, s.config.ServiceEndpoint, credID),
+		ID:                   fmt.Sprintf(`%s/status`, credID),
 		Type:                 statussdk.StatusList2021EntryType,
 		StatusPurpose:        statusPurpose,
-		StatusListIndex:      strconv.Itoa(randomIndex),
+		StatusListIndex:      indexStr,
 		StatusListCredential: statusListCredentialID,
 	}, nil
 }
 
-func (s Service) createStatusListCredential(ctx context.Context, tx storage.Tx, statusPurpose statussdk.StatusPurpose, issuerID, issuerKID string, slcMetadata StatusListCredentialMetadata) (int, *credential.VerifiableCredential, error) {
-	statusListID := fmt.Sprintf("%s/status/%s", s.config.ServiceEndpoint, uuid.NewString())
-
-	generatedStatusListCredential, err := statussdk.GenerateStatusList2021Credential(statusListID, issuerID, statusPurpose, []credential.VerifiableCredential{})
+func (s Service) createStatusListCredential(ctx context.Context, tx storage.Tx, statusPurpose statussdk.StatusPurpose, issuerID, fullyQualifiedVerificationMethodID string, slcMetadata StatusListCredentialMetadata) (int, *credential.VerifiableCredential, error) {
+	statusListID := uuid.NewString()
+	statusListURI := fmt.Sprintf("%s/%s", config.GetStatusBase(), statusListID)
+	generatedStatusListCredential, err := statussdk.GenerateStatusList2021Credential(statusListURI, issuerID, statusPurpose, []credential.VerifiableCredential{})
 	if err != nil {
 		return -1, nil, sdkutil.LoggingErrorMsg(err, "could not generate status list")
 	}
 
-	statusListCredJWT, err := s.signCredentialJWT(ctx, issuerKID, *generatedStatusListCredential)
+	statusListCredJWT, err := s.signCredentialJWT(ctx, fullyQualifiedVerificationMethodID, *generatedStatusListCredential)
 	if err != nil {
 		return -1, nil, sdkutil.LoggingErrorMsg(err, "could not sign status list credential")
 	}
 
 	statusListContainer := credint.Container{
-		ID:            generatedStatusListCredential.ID,
-		IssuerKID:     issuerKID,
-		Credential:    generatedStatusListCredential,
-		CredentialJWT: statusListCredJWT,
+		ID:                                 statusListID,
+		FullyQualifiedVerificationMethodID: fullyQualifiedVerificationMethodID,
+		Credential:                         generatedStatusListCredential,
+		CredentialJWT:                      statusListCredJWT,
 	}
 
 	statusListStorageRequest := StoreCredentialRequest{

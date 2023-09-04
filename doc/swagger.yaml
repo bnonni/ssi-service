@@ -542,14 +542,19 @@ definitions:
           using JWS. In other words, the `proof` field is not present. See `credentialJwt` for the secured Verifiable
           Credential.
       credentialJwt:
-        description: JWT representation of `credential`, secured with an external
-          proof signed by `issuerKid`.
+        description: |-
+          JWT representation of `credential`, secured with an external proof. Verification can be done according to
+          `fullyQualifiedVerificationMethodId`.
+        type: string
+      fullyQualifiedVerificationMethodId:
+        description: |-
+          Fully qualified verification method ID that can be used to verify the credential. For example
+          `did:ion:EiDpQBo_nEfuLVeppgmPVQNEhtrnZLWFsB9ziZUuaKCJ3Q#83526c36-136c-423b-a57a-f190b83ae531`.
         type: string
       id:
-        description: Credential ID
-        type: string
-      issuerKid:
-        description: The KID of the private key used to sign `credentialJwt`.
+        description: |-
+          UUID assigned by the ssi-service. For example, 48958871-6a6d-4a25-889f-88c9c6835780. The `credential.id`
+          value will be a URL that can be dereferenced, which includes this ID.
         type: string
       revoked:
         description: Whether this credential is currently revoked.
@@ -557,6 +562,38 @@ definitions:
       suspended:
         description: Whether this credential is currently suspended.
         type: boolean
+    type: object
+  github_com_tbd54566975_ssi-service_pkg_service_credential.Status:
+    properties:
+      id:
+        description: ID of the credentials whose status this object represents.
+        type: string
+      revoked:
+        type: boolean
+      suspended:
+        type: boolean
+    required:
+    - revoked
+    - suspended
+    type: object
+  github_com_tbd54566975_ssi-service_pkg_service_did.CreateIONDIDOptions:
+    properties:
+      jwsPublicKeys:
+        description: |-
+          List of JSON Web Signatures serialized using compact serialization. The payload must be a JSON object that
+          represents a publicKey object. Such object must follow the schema described in step 3 of
+          https://identity.foundation/sidetree/spec/#add-public-keys. The payload must be signed
+          with the private key associated with the `publicKeyJwk` that will be added in the DID document.
+          The input will be parsed and verified, and the payload will be used to add public keys to the DID document in the
+          same way in which the `add-public-keys` patch action adds keys (see https://identity.foundation/sidetree/spec/#add-public-keys).
+        items:
+          type: string
+        type: array
+      serviceEndpoints:
+        description: Services to add to the DID document that will be created.
+        items:
+          $ref: '#/definitions/github_com_TBD54566975_ssi-sdk_did.Service'
+        type: array
     type: object
   github_com_tbd54566975_ssi-service_pkg_service_framework.Status:
     properties:
@@ -627,15 +664,19 @@ definitions:
         description: ID of this template.
         type: string
       issuer:
-        description: ID of the issuer that will be issuance the credentials.
+        description: ID of the issuer that will be issuing the credentials.
         type: string
-      issuerKid:
-        description: ID of the key that will be used to sign the credentials.
+      verificationMethodId:
+        description: |-
+          The id of the verificationMethod (see https://www.w3.org/TR/did-core/#verification-methods) who's privateKey is
+          stored in ssi-service. The verificationMethod must be part of the did document associated with `issuer`.
+          The private key associated with the verificationMethod's publicKey will be used to sign the credentials.
+        example: did:key:z6MkkZDjunoN4gyPMx5TSy7Mfzw22D2RZQZUcx46bii53Ex3#z6MkkZDjunoN4gyPMx5TSy7Mfzw22D2RZQZUcx46bii53Ex3
         type: string
     required:
     - credentialManifest
     - issuer
-    - issuerKid
+    - verificationMethodId
     type: object
   github_com_tbd54566975_ssi-service_pkg_service_issuance.TimeLike:
     properties:
@@ -667,10 +708,16 @@ definitions:
         items:
           type: string
         type: array
+      callbackUrl:
+        description: |-
+          The URL that the presenter should be submitting the presentation submission to.
+          Optional.
+        example: https://example.com
+        type: string
       credentialManifestJwt:
         description: |-
-          CredentialManifestJWT is a JWT token with a "presentation_definition" claim within it. The
-          value of the field named "presentation_definition.id" matches PresentationDefinitionID.
+          CredentialManifestJWT is a JWT token with a "presentation_definition" claim and an optional "callbackUrl" claim
+          within it. The value of the field named "presentation_definition.id" matches PresentationDefinitionID.
           This is an output only field.
         type: string
       expiration:
@@ -684,17 +731,20 @@ definitions:
       issuerId:
         description: DID of the issuer of this presentation definition.
         type: string
-      issuerKid:
-        description: The privateKey associated with the KID used to sign the JWT.
-        type: string
       manifestId:
         description: ID of the credential manifest used for this request.
         type: string
+      verificationMethodId:
+        description: |-
+          The id of the verificationMethod (see https://www.w3.org/TR/did-core/#verification-methods) who's privateKey is
+          stored in ssi-service. The verificationMethod must be part of the did document associated with `issuer`.
+          The private key associated with the verificationMethod's publicKey will be used to sign the JWT.
+        example: did:key:z6MkkZDjunoN4gyPMx5TSy7Mfzw22D2RZQZUcx46bii53Ex3#z6MkkZDjunoN4gyPMx5TSy7Mfzw22D2RZQZUcx46bii53Ex3
+        type: string
     required:
-    - expiration
     - issuerId
-    - issuerKid
     - manifestId
+    - verificationMethodId
     type: object
   github_com_tbd54566975_ssi-service_pkg_service_presentation_model.Request:
     properties:
@@ -703,6 +753,12 @@ definitions:
         items:
           type: string
         type: array
+      callbackUrl:
+        description: |-
+          The URL that the presenter should be submitting the presentation submission to.
+          Optional.
+        example: https://example.com
+        type: string
       expiration:
         description: Expiration as defined in https://www.rfc-editor.org/rfc/rfc7519.html#section-4.1.4
         type: string
@@ -714,23 +770,26 @@ definitions:
       issuerId:
         description: DID of the issuer of this presentation definition.
         type: string
-      issuerKid:
-        description: The privateKey associated with the KID used to sign the JWT.
-        type: string
       presentationDefinitionId:
         description: ID of the presentation definition used for this request.
         type: string
       presentationRequestJwt:
         description: |-
-          PresentationDefinitionJWT is a JWT token with a "presentation_definition" claim within it. The
-          value of the field named "presentation_definition.id" matches PresentationDefinitionID.
+          PresentationDefinitionJWT is a JWT token with a "presentation_definition" claim and an optional "callbackUrl" claim
+          within it. The value of the field named "presentation_definition.id" matches PresentationDefinitionID.
           This is an output only field.
         type: string
+      verificationMethodId:
+        description: |-
+          The id of the verificationMethod (see https://www.w3.org/TR/did-core/#verification-methods) who's privateKey is
+          stored in ssi-service. The verificationMethod must be part of the did document associated with `issuer`.
+          The private key associated with the verificationMethod's publicKey will be used to sign the JWT.
+        example: did:key:z6MkkZDjunoN4gyPMx5TSy7Mfzw22D2RZQZUcx46bii53Ex3#z6MkkZDjunoN4gyPMx5TSy7Mfzw22D2RZQZUcx46bii53Ex3
+        type: string
     required:
-    - expiration
     - issuerId
-    - issuerKid
     - presentationDefinitionId
+    - verificationMethodId
     type: object
   github_com_tbd54566975_ssi-service_pkg_service_presentation_model.Submission:
     properties:
@@ -782,10 +841,12 @@ definitions:
     - Submission
   github_com_tbd54566975_ssi-service_pkg_service_webhook.Verb:
     enum:
+    - BatchCreate
     - Create
     - Delete
     type: string
     x-enum-varnames:
+    - BatchCreate
     - Create
     - Delete
   github_com_tbd54566975_ssi-service_pkg_service_webhook.Webhook:
@@ -803,6 +864,57 @@ definitions:
     - urls
     - verb
     type: object
+  github_com_tbd54566975_ssi-service_pkg_service_well-known.VerifyDIDConfigurationRequest:
+    properties:
+      origin:
+        description: |-
+          Represents an origin to fetch the DID Configuration Resource from. Must be serialized as described in https://html.spec.whatwg.org/multipage/browsers.html#origin.
+          The `scheme` MUST be `https`.
+        example: https://example.com
+        type: string
+    required:
+    - origin
+    type: object
+  github_com_tbd54566975_ssi-service_pkg_service_well-known.VerifyDIDConfigurationResponse:
+    properties:
+      didConfiguration:
+        description: The configuration that was fetched from the origin's well known
+          location.
+        type: string
+      reason:
+        description: When Verified == false, the reason why it wasn't verified.
+        type: string
+      verified:
+        description: Whether the DIDConfiguration was verified.
+        type: boolean
+    type: object
+  ion.PublicKey:
+    properties:
+      id:
+        type: string
+      publicKeyJwk:
+        $ref: '#/definitions/jwx.PublicKeyJWK'
+      purposes:
+        items:
+          $ref: '#/definitions/ion.PublicKeyPurpose'
+        type: array
+      type:
+        type: string
+    type: object
+  ion.PublicKeyPurpose:
+    enum:
+    - authentication
+    - assertionMethod
+    - capabilityInvocation
+    - capabilityDelegation
+    - keyAgreement
+    type: string
+    x-enum-varnames:
+    - Authentication
+    - AssertionMethod
+    - CapabilityInvocation
+    - CapabilityDelegation
+    - KeyAgreement
   jwx.PublicKeyJWK:
     properties:
       alg:
@@ -845,6 +957,7 @@ definitions:
       spec_version:
         type: string
     required:
+    - applicant
     - format
     - id
     - manifest_id
@@ -950,11 +1063,68 @@ definitions:
     - id
     - schema
     type: object
+  pkg_server_router.BatchCreateCredentialsRequest:
+    properties:
+      requests:
+        description: Required. The list of create credential requests. Cannot be more
+          than {{.Services.CredentialConfig.BatchCreateMaxItems}} items.
+        items:
+          $ref: '#/definitions/pkg_server_router.CreateCredentialRequest'
+        type: array
+    required:
+    - requests
+    type: object
+  pkg_server_router.BatchCreateCredentialsResponse:
+    properties:
+      credentials:
+        description: The credentials created.
+        items:
+          $ref: '#/definitions/github_com_tbd54566975_ssi-service_internal_credential.Container'
+        type: array
+    type: object
+  pkg_server_router.BatchCreateDIDsRequest:
+    properties:
+      requests:
+        description: Required. The list of create credential requests. Cannot be more
+          than {{.Services.DIDConfig.BatchCreateMaxItems}} items.
+        items:
+          $ref: '#/definitions/pkg_server_router.CreateDIDByMethodRequest'
+        type: array
+    required:
+    - requests
+    type: object
+  pkg_server_router.BatchCreateDIDsResponse:
+    properties:
+      dids:
+        description: The DID documents created.
+        items:
+          $ref: '#/definitions/did.Document'
+        type: array
+    type: object
+  pkg_server_router.BatchUpdateCredentialStatusRequest:
+    properties:
+      requests:
+        description: Required. The list of update credential requests. Cannot be more
+          than the config value in `services.credentials.batch_update_status_max_items`.
+        items:
+          $ref: '#/definitions/pkg_server_router.SingleUpdateCredentialStatusRequest'
+        type: array
+    required:
+    - requests
+    type: object
+  pkg_server_router.BatchUpdateCredentialStatusResponse:
+    properties:
+      credentialStatuses:
+        items:
+          $ref: '#/definitions/github_com_tbd54566975_ssi-service_pkg_service_credential.Status'
+        type: array
+    type: object
   pkg_server_router.CreateCredentialRequest:
     properties:
       '@context':
         description: A context is optional. If not present, we'll apply default, required
           context values.
+        example: ""
         type: string
       data:
         additionalProperties:
@@ -964,26 +1134,31 @@ definitions:
         example:
           alumniOf: did_for_uni
         type: object
+      evidence:
+        description: Optional. Corresponds to `evidence` in https://www.w3.org/TR/vc-data-model-2.0/#evidence
+        example:
+        - '[{"id":"https://example.edu/evidence/f2aeec97-fc0d-42bf-8ca7-0548192d4231"'
+        - '"type":["DocumentVerification"]}]'
+        items: {}
+        type: array
       expiry:
         description: Optional. Corresponds to `expirationDate` in https://www.w3.org/TR/vc-data-model/#expiration.
-        example: "2020-01-01T19:23:24Z"
+        example: "2029-01-01T19:23:24Z"
         type: string
       issuer:
         description: The issuer id.
-        example: did:key:z6MkiTBz1ymuepAQ4HEHYSF1H8quG5GLVVQR3djdX3mDooWp
-        type: string
-      issuerKid:
-        description: The KID used to sign the credential.
-        example: '#z6MkiTBz1ymuepAQ4HEHYSF1H8quG5GLVVQR3djdX3mDooWp'
+        example: did:key:z6MkkZDjunoN4gyPMx5TSy7Mfzw22D2RZQZUcx46bii53Ex3
         type: string
       revocable:
         description: |-
           Whether this credential can be revoked. When true, the created VC will have the "credentialStatus"
           property set.
+        example: true
         type: boolean
       schemaId:
         description: A schema ID is optional. If present, we'll attempt to look it
           up and validate the data against it.
+        example: 30e3f9b7-0528-4f6f-8aac-b74c8843187a
         type: string
       subject:
         description: The subject id.
@@ -993,12 +1168,20 @@ definitions:
         description: |-
           Whether this credential can be suspended. When true, the created VC will have the "credentialStatus"
           property set.
+        example: false
         type: boolean
+      verificationMethodId:
+        description: |-
+          The id of the verificationMethod (see https://www.w3.org/TR/did-core/#verification-methods) who's privateKey is
+          stored in ssi-service. The verificationMethod must be part of the did document associated with `issuer`.
+          The private key associated with the verificationMethod's publicKey will be used to sign the credential.
+        example: did:key:z6MkkZDjunoN4gyPMx5TSy7Mfzw22D2RZQZUcx46bii53Ex3#z6MkkZDjunoN4gyPMx5TSy7Mfzw22D2RZQZUcx46bii53Ex3
+        type: string
     required:
     - data
     - issuer
-    - issuerKid
     - subject
+    - verificationMethodId
     type: object
   pkg_server_router.CreateCredentialResponse:
     properties:
@@ -1010,14 +1193,19 @@ definitions:
           using JWS. In other words, the `proof` field is not present. See `credentialJwt` for the secured Verifiable
           Credential.
       credentialJwt:
-        description: JWT representation of `credential`, secured with an external
-          proof signed by `issuerKid`.
+        description: |-
+          JWT representation of `credential`, secured with an external proof. Verification can be done according to
+          `fullyQualifiedVerificationMethodId`.
+        type: string
+      fullyQualifiedVerificationMethodId:
+        description: |-
+          Fully qualified verification method ID that can be used to verify the credential. For example
+          `did:ion:EiDpQBo_nEfuLVeppgmPVQNEhtrnZLWFsB9ziZUuaKCJ3Q#83526c36-136c-423b-a57a-f190b83ae531`.
         type: string
       id:
-        description: Credential ID
-        type: string
-      issuerKid:
-        description: The KID of the private key used to sign `credentialJwt`.
+        description: |-
+          UUID assigned by the ssi-service. For example, 48958871-6a6d-4a25-889f-88c9c6835780. The `credential.id`
+          value will be a URL that can be dereferenced, which includes this ID.
         type: string
       revoked:
         description: Whether this credential is currently revoked.
@@ -1031,9 +1219,8 @@ definitions:
       keyType:
         allOf:
         - $ref: '#/definitions/crypto.KeyType'
-        description: |-
-          Identifies the cryptographic algorithm family to use when generating this key.
-          One of the following: "Ed25519", "X25519", "secp256k1", "P-224","P-256","P-384", "P-521", "RSA"
+        description: Identifies the cryptographic algorithm family to use when generating
+          this key.
       options:
         description: Options for creating the DID. Implementation dependent on the
           method.
@@ -1044,6 +1231,59 @@ definitions:
     properties:
       did:
         $ref: '#/definitions/did.Document'
+    type: object
+  pkg_server_router.CreateDIDConfigurationRequest:
+    properties:
+      expirationDate:
+        description: Will be used to set the `DomainLinkageCredential.credentialSubject.expirationDate`.
+          Required.
+        example: "2051-10-05T14:48:00.000Z"
+        type: string
+      issuanceDate:
+        description: |-
+          Will be used to set the `DomainLinkageCredential.credentialSubject.issuanceDate`. If left empty, then the current
+          time will be used.
+          Optional.
+        example: "2021-10-05T14:48:00.000Z"
+        type: string
+      issuerDid:
+        description: |-
+          DID that identifies who the issuer of the credential(s) will be.
+          Required.
+        example: did:key:z6MkkZDjunoN4gyPMx5TSy7Mfzw22D2RZQZUcx46bii53Ex3
+        type: string
+      origin:
+        description: |-
+          Serialization of an origin as described in https://html.spec.whatwg.org/multipage/browsers.html#origin. Represents
+          the origin that the IssuerDID controls, which will be included in the `DomainLinkageCredential.credentialSubject.origin`
+          value.
+          Required.
+        example: https://www.tbd.website/
+        type: string
+      verificationMethodId:
+        description: |-
+          The id of the verificationMethod (see https://www.w3.org/TR/did-core/#verification-methods) who's privateKey is
+          stored in ssi-service. The verificationMethod must be part of the did document associated with `issuer`.
+          The private key associated with the verificationMethod's publicKey will be used to sign the domain linkage credential.
+          Required.
+        example: did:key:z6MkkZDjunoN4gyPMx5TSy7Mfzw22D2RZQZUcx46bii53Ex3#z6MkkZDjunoN4gyPMx5TSy7Mfzw22D2RZQZUcx46bii53Ex3
+        type: string
+    required:
+    - expirationDate
+    - issuerDid
+    - origin
+    - verificationMethodId
+    type: object
+  pkg_server_router.CreateDIDConfigurationResponse:
+    properties:
+      didConfiguration:
+        allOf:
+        - $ref: '#/definitions/pkg_server_router.DIDConfiguration'
+        description: The DID Configuration Resource according to https://identity.foundation/.well-known/resources/did-configuration/#did-configuration-resource
+      wellKnownLocation:
+        description: The location in which the `didConfiguration` value should be
+          hosted.
+        type: string
     type: object
   pkg_server_router.CreateIssuanceTemplateRequest:
     properties:
@@ -1060,41 +1300,76 @@ definitions:
         description: ID of this template.
         type: string
       issuer:
-        description: ID of the issuer that will be issuance the credentials.
+        description: ID of the issuer that will be issuing the credentials.
         type: string
-      issuerKid:
-        description: ID of the key that will be used to sign the credentials.
+      verificationMethodId:
+        description: |-
+          The id of the verificationMethod (see https://www.w3.org/TR/did-core/#verification-methods) who's privateKey is
+          stored in ssi-service. The verificationMethod must be part of the did document associated with `issuer`.
+          The private key associated with the verificationMethod's publicKey will be used to sign the credentials.
+        example: did:key:z6MkkZDjunoN4gyPMx5TSy7Mfzw22D2RZQZUcx46bii53Ex3#z6MkkZDjunoN4gyPMx5TSy7Mfzw22D2RZQZUcx46bii53Ex3
         type: string
     required:
     - credentialManifest
     - issuer
-    - issuerKid
+    - verificationMethodId
     type: object
   pkg_server_router.CreateManifestRequest:
     properties:
       description:
+        description: |-
+          Explains what the Manifest in question is generally offering in exchange for meeting its requirements.
+          Optional.
         type: string
       format:
-        $ref: '#/definitions/exchange.ClaimFormat'
+        allOf:
+        - $ref: '#/definitions/exchange.ClaimFormat'
+        description: |-
+          Formats that the issuer can support when issuing the credential. At least one needs to be set. We currently only
+          support `jwt_vc` for issuance. See https://identity.foundation/claim-format-registry/#registry for the definition.
+          TODO: support different claim formats https://github.com/TBD54566975/ssi-service/issues/96
       issuerDid:
-        type: string
-      issuerKid:
+        description: |-
+          DID that identifies who the issuer of the credential(s) will be.
+          Required.
         type: string
       issuerName:
+        description: |-
+          Human-readable name the Issuer wishes to be recognized by.
+          Optional.
         type: string
       name:
+        description: |-
+          Summarizing title for the Manifest in question.
+          Optional.
         type: string
       outputDescriptors:
+        description: Array of objects as defined in https://identity.foundation/credential-manifest/#output-descriptor.
         items:
           $ref: '#/definitions/manifest.OutputDescriptor'
         type: array
       presentationDefinition:
-        $ref: '#/definitions/exchange.PresentationDefinition'
+        allOf:
+        - $ref: '#/definitions/exchange.PresentationDefinition'
+        description: value of the presentation definition to use. Must be empty if
+          `id` is present.
+      presentationDefinitionId:
+        description: id of the presentation definition created with the PresentationDefinitions
+          API. Must be empty if `value` is present.
+        type: string
+      verificationMethodId:
+        description: |-
+          The id of the verificationMethod (see https://www.w3.org/TR/did-core/#verification-methods) who's privateKey is
+          stored in ssi-service. The verificationMethod must be part of the did document associated with `issuer`.
+          The private key associated with the verificationMethod's publicKey will be used to sign the issued credentials.
+          Required.
+        example: did:key:z6MkkZDjunoN4gyPMx5TSy7Mfzw22D2RZQZUcx46bii53Ex3#z6MkkZDjunoN4gyPMx5TSy7Mfzw22D2RZQZUcx46bii53Ex3
+        type: string
     required:
     - format
     - issuerDid
-    - issuerKid
     - outputDescriptors
+    - verificationMethodId
     type: object
   pkg_server_router.CreateManifestRequestRequest:
     properties:
@@ -1105,28 +1380,36 @@ definitions:
         items:
           type: string
         type: array
+      callbackUrl:
+        description: |-
+          The URL that the presenter should be submitting the presentation submission to.
+          Optional.
+        example: https://example.com
+        type: string
       credentialManifestId:
         description: ID of the credential manifest to use for this request.
         type: string
       expiration:
         description: |-
           Expiration as defined in https://www.rfc-editor.org/rfc/rfc7519.html#section-4.1.4
-          Optional. When not specified, the request will be valid for a default duration.
+          Optional.
         type: string
       issuerId:
-        description: |-
-          DID of the issuer of this presentation definition. The DID must have been previously created with the DID API,
-          or the PrivateKey must have been added independently.
+        description: DID of the issuer of this presentation definition. The DID must
+          have been previously created with the DID API.
         type: string
-      issuerKid:
+      verificationMethodId:
         description: |-
-          The privateKey associated with the KID will be used to sign an envelope that contains
+          The id of the verificationMethod (see https://www.w3.org/TR/did-core/#verification-methods) who's privateKey is
+          stored in ssi-service. The verificationMethod must be part of the did document associated with `issuerId`.
+          The private key associated with the verificationMethod's publicKey will be used to sign an envelope that contains
           the created presentation definition.
+        example: did:key:z6MkkZDjunoN4gyPMx5TSy7Mfzw22D2RZQZUcx46bii53Ex3#z6MkkZDjunoN4gyPMx5TSy7Mfzw22D2RZQZUcx46bii53Ex3
         type: string
     required:
     - credentialManifestId
     - issuerId
-    - issuerKid
+    - verificationMethodId
     type: object
   pkg_server_router.CreateManifestRequestResponse:
     properties:
@@ -1176,28 +1459,36 @@ definitions:
         items:
           type: string
         type: array
+      callbackUrl:
+        description: |-
+          The URL that the presenter should be submitting the presentation submission to.
+          Optional.
+        example: https://example.com
+        type: string
       expiration:
         description: |-
           Expiration as defined in https://www.rfc-editor.org/rfc/rfc7519.html#section-4.1.4
-          Optional. When not specified, the request will be valid for a default duration.
+          Optional.
         type: string
       issuerId:
-        description: |-
-          DID of the issuer of this presentation definition. The DID must have been previously created with the DID API,
-          or the PrivateKey must have been added independently.
-        type: string
-      issuerKid:
-        description: |-
-          The privateKey associated with the KID will be used to sign an envelope that contains
-          the created presentation definition.
+        description: DID of the issuer of this presentation definition. The DID must
+          have been previously created with the DID API.
         type: string
       presentationDefinitionId:
         description: ID of the presentation definition to use for this request.
         type: string
+      verificationMethodId:
+        description: |-
+          The id of the verificationMethod (see https://www.w3.org/TR/did-core/#verification-methods) who's privateKey is
+          stored in ssi-service. The verificationMethod must be part of the did document associated with `issuerId`.
+          The private key associated with the verificationMethod's publicKey will be used to sign an envelope that contains
+          the created presentation definition.
+        example: did:key:z6MkkZDjunoN4gyPMx5TSy7Mfzw22D2RZQZUcx46bii53Ex3#z6MkkZDjunoN4gyPMx5TSy7Mfzw22D2RZQZUcx46bii53Ex3
+        type: string
     required:
     - issuerId
-    - issuerKid
     - presentationDefinitionId
+    - verificationMethodId
     type: object
   pkg_server_router.CreateRequestResponse:
     properties:
@@ -1209,6 +1500,11 @@ definitions:
       description:
         description: Description is an optional human-readable description for a schema
         type: string
+      issuer:
+        description: |-
+          Issuer represents the DID of the issuer for the schema if it's signed. Required if intending to sign the
+          schema as a credential using JsonSchemaCredential.
+        type: string
       name:
         description: Name is a human-readable name for a schema
         type: string
@@ -1219,18 +1515,43 @@ definitions:
           Schema represents the JSON schema for the credential schema
           If the schema has an $id field, it will be overwritten with an ID the service generates.
           The schema must be against draft 2020-12, 2019-09, or 7.
+          Must include a string field `$schema` that must be one of `https://json-schema.org/draft/2020-12/schema`,
+          `https://json-schema.org/draft/2019-09/schema`, or `https://json-schema.org/draft-07/schema`.
+      verificationMethodId:
+        description: |-
+          The id of the verificationMethod (see https://www.w3.org/TR/did-core/#verification-methods) who's privateKey is
+          stored in ssi-service. The verificationMethod must be part of the did document associated with `issuer`.
+          The private key associated with the verificationMethod's publicKey will be used to sign the schema as a
+          credential using JsonSchemaCredential.
+          Required if intending to sign the schema as a credential using JsonSchemaCredential.
+        example: did:key:z6MkkZDjunoN4gyPMx5TSy7Mfzw22D2RZQZUcx46bii53Ex3#z6MkkZDjunoN4gyPMx5TSy7Mfzw22D2RZQZUcx46bii53Ex3
+        type: string
     required:
+    - issuer
     - name
     - schema
+    - verificationMethodId
     type: object
   pkg_server_router.CreateSchemaResponse:
     properties:
       credentialSchema:
+        description: CredentialSchema is the JWT schema for the credential, returned
+          when the type is CredentialSchema
         type: string
       id:
+        description: ID is the URL of for resolution of the schema
         type: string
       schema:
-        $ref: '#/definitions/schema.JSONSchema'
+        allOf:
+        - $ref: '#/definitions/schema.JSONSchema'
+        description: Schema is the JSON schema for the credential, returned when the
+          type is JsonSchema
+      type:
+        allOf:
+        - $ref: '#/definitions/schema.VCJSONSchemaType'
+        description: Type is the type of schema such as `JsonSchema` or `JsonSchemaCredential`
+    required:
+    - type
     type: object
   pkg_server_router.CreateSubmissionRequest:
     properties:
@@ -1267,6 +1588,16 @@ definitions:
       webhook:
         $ref: '#/definitions/github_com_tbd54566975_ssi-service_pkg_service_webhook.Webhook'
     type: object
+  pkg_server_router.DIDConfiguration:
+    properties:
+      '@context': {}
+      linked_dids:
+        items: {}
+        type: array
+    required:
+    - '@context'
+    - linked_dids
+    type: object
   pkg_server_router.GetApplicationResponse:
     properties:
       application:
@@ -1277,11 +1608,33 @@ definitions:
   pkg_server_router.GetCredentialResponse:
     properties:
       credential:
-        $ref: '#/definitions/credential.VerifiableCredential'
+        allOf:
+        - $ref: '#/definitions/credential.VerifiableCredential'
+        description: |-
+          Verifiable Credential in the `application/vc+ld+json` format. The credential is secured with an external proof
+          using JWS. In other words, the `proof` field is not present. See `credentialJwt` for the secured Verifiable
+          Credential.
       credentialJwt:
+        description: |-
+          JWT representation of `credential`, secured with an external proof. Verification can be done according to
+          `fullyQualifiedVerificationMethodId`.
+        type: string
+      fullyQualifiedVerificationMethodId:
+        description: |-
+          Fully qualified verification method ID that can be used to verify the credential. For example
+          `did:ion:EiDpQBo_nEfuLVeppgmPVQNEhtrnZLWFsB9ziZUuaKCJ3Q#83526c36-136c-423b-a57a-f190b83ae531`.
         type: string
       id:
+        description: |-
+          UUID assigned by the ssi-service. For example, 48958871-6a6d-4a25-889f-88c9c6835780. The `credential.id`
+          value will be a URL that can be dereferenced, which includes this ID.
         type: string
+      revoked:
+        description: Whether this credential is currently revoked.
+        type: boolean
+      suspended:
+        description: Whether this credential is currently suspended.
+        type: boolean
     type: object
   pkg_server_router.GetCredentialStatusListResponse:
     properties:
@@ -1375,9 +1728,23 @@ definitions:
   pkg_server_router.GetSchemaResponse:
     properties:
       credentialSchema:
+        description: CredentialSchema is the JWT schema for the credential, returned
+          when the type is CredentialSchema
+        type: string
+      id:
+        description: ID is the URL of for resolution of the schema
         type: string
       schema:
-        $ref: '#/definitions/schema.JSONSchema'
+        allOf:
+        - $ref: '#/definitions/schema.JSONSchema'
+        description: Schema is the JSON schema for the credential, returned when the
+          type is JsonSchema
+      type:
+        allOf:
+        - $ref: '#/definitions/schema.VCJSONSchemaType'
+        description: Type is the type of schema such as `JsonSchema` or `JsonSchemaCredential`
+    required:
+    - type
     type: object
   pkg_server_router.GetSubmissionResponse:
     properties:
@@ -1409,6 +1776,10 @@ definitions:
         items:
           $ref: '#/definitions/github_com_tbd54566975_ssi-service_internal_credential.Container'
         type: array
+      nextPageToken:
+        description: Pagination token to retrieve the next page of results. If the
+          value is "", it means no further results for the request.
+        type: string
     type: object
   pkg_server_router.ListDIDMethodsResponse:
     properties:
@@ -1423,6 +1794,10 @@ definitions:
         items:
           $ref: '#/definitions/did.Document'
         type: array
+      nextPageToken:
+        description: Pagination token to retrieve the next page of results. If the
+          value is "", it means no further results for the request.
+        type: string
     type: object
   pkg_server_router.ListDefinitionsResponse:
     properties:
@@ -1462,9 +1837,21 @@ definitions:
     type: object
   pkg_server_router.ListOperationsResponse:
     properties:
+      nextPageToken:
+        description: Pagination token to retrieve the next page of results. If the
+          value is "", it means no further results for the request.
+        type: string
       operations:
         items:
           $ref: '#/definitions/pkg_server_router.Operation'
+        type: array
+    type: object
+  pkg_server_router.ListPresentationRequestsResponse:
+    properties:
+      presentationRequests:
+        description: The presentation requests matching the query.
+        items:
+          $ref: '#/definitions/github_com_tbd54566975_ssi-service_pkg_service_presentation_model.Request'
         type: array
     type: object
   pkg_server_router.ListResponsesResponse:
@@ -1476,13 +1863,22 @@ definitions:
     type: object
   pkg_server_router.ListSchemasResponse:
     properties:
+      nextPageToken:
+        description: Pagination token to retrieve the next page of results. If the
+          value is "", it means no further results for the request.
+        type: string
       schemas:
+        description: Schemas is the list of all schemas the service holds
         items:
           $ref: '#/definitions/pkg_server_router.GetSchemaResponse'
         type: array
     type: object
   pkg_server_router.ListSubmissionResponse:
     properties:
+      nextPageToken:
+        description: Pagination token to retrieve the next page of results. If the
+          value is "", it means no further results for the request.
+        type: string
       submissions:
         items:
           $ref: '#/definitions/github_com_tbd54566975_ssi-service_pkg_service_presentation_model.Submission'
@@ -1578,6 +1974,40 @@ definitions:
       id:
         type: string
     type: object
+  pkg_server_router.SingleUpdateCredentialStatusRequest:
+    properties:
+      id:
+        description: ID of the credential who's status should be updated.
+        type: string
+      revoked:
+        description: |-
+          The new revoked status of this credential. The status will be saved in the encodedList of the StatusList2021
+          credential associated with this VC.
+        type: boolean
+      suspended:
+        type: boolean
+    required:
+    - id
+    type: object
+  pkg_server_router.StateChange:
+    properties:
+      publicKeyIdsToRemove:
+        items:
+          type: string
+        type: array
+      publicKeysToAdd:
+        items:
+          $ref: '#/definitions/ion.PublicKey'
+        type: array
+      serviceIdsToRemove:
+        items:
+          type: string
+        type: array
+      servicesToAdd:
+        items:
+          $ref: '#/definitions/github_com_TBD54566975_ssi-sdk_did.Service'
+        type: array
+    type: object
   pkg_server_router.StoreKeyRequest:
     properties:
       base58PrivateKey:
@@ -1609,9 +2039,9 @@ definitions:
     properties:
       applicationJwt:
         description: |-
-          Contains the following properties:
-          Application  manifestsdk.CredentialApplication `json:"credential_application" validate:"required"`
-          Credentials  []interface{}                     `json:"vcs" validate:"required"`
+          A JWT signed by the applicant. The payload MUST contain the following properties:
+          - `credential_application`: an object of type manifest.CredentialApplication (specified in https://identity.foundation/credential-manifest/#credential-application).
+          - `vcs`: an array of Verifiable Credentials.
         type: string
     required:
     - applicationJwt
@@ -1645,6 +2075,21 @@ definitions:
       suspended:
         type: boolean
     type: object
+  pkg_server_router.UpdateDIDByMethodRequest:
+    properties:
+      stateChange:
+        allOf:
+        - $ref: '#/definitions/pkg_server_router.StateChange'
+        description: Expected to be populated when `method == "ion"`. Describes the
+          changes that are requested.
+    required:
+    - stateChange
+    type: object
+  pkg_server_router.UpdateDIDByMethodResponse:
+    properties:
+      did:
+        $ref: '#/definitions/did.Document'
+    type: object
   pkg_server_router.VerifyCredentialRequest:
     properties:
       credential:
@@ -1663,6 +2108,23 @@ definitions:
         type: string
       verified:
         description: Whether the credential was verified.
+        type: boolean
+    type: object
+  pkg_server_router.VerifyPresentationRequest:
+    properties:
+      presentationJwt:
+        description: A JWT that encodes a verifiable presentation according to https://www.w3.org/TR/vc-data-model/#json-web-token
+        type: string
+    required:
+    - presentationJwt
+    type: object
+  pkg_server_router.VerifyPresentationResponse:
+    properties:
+      reason:
+        description: The reason why this presentation couldn't be verified.
+        type: string
+      verified:
+        description: Whether the presentation was verified.
         type: boolean
     type: object
   rendering.ColorResource:
@@ -1802,20 +2264,36 @@ definitions:
   resolution.DocumentMetadata:
     properties:
       canonicalId:
+        description: See `canonicalId` in https://www.w3.org/TR/did-core/#did-document-metadata
         type: string
       created:
+        description: See `created` in https://www.w3.org/TR/did-core/#did-document-metadata
         type: string
       deactivated:
+        description: See `deactivated` in https://www.w3.org/TR/did-core/#did-document-metadata
         type: boolean
       equivalentId:
-        type: string
+        description: See `equivalentId` in https://www.w3.org/TR/did-core/#did-document-metadata
+        items:
+          type: string
+        type: array
+      method:
+        allOf:
+        - $ref: '#/definitions/resolution.Method'
+        description: |-
+          Optional information that is specific to the DID Method of the DID Document resolved. Populated only
+          for sidetree based did methods (e.g. ION), as described in https://identity.foundation/sidetree/spec/#did-resolver-output
       nextUpdate:
+        description: See `nextUpdate` in https://www.w3.org/TR/did-core/#did-document-metadata
         type: string
       nextVersionId:
+        description: See `nextVersionId` in https://www.w3.org/TR/did-core/#did-document-metadata
         type: string
       updated:
+        description: See `updated` in https://www.w3.org/TR/did-core/#did-document-metadata
         type: string
       versionId:
+        description: See `versionId` in https://www.w3.org/TR/did-core/#did-document-metadata
         type: string
     type: object
   resolution.Error:
@@ -1836,9 +2314,29 @@ definitions:
       error:
         $ref: '#/definitions/resolution.Error'
     type: object
+  resolution.Method:
+    properties:
+      published:
+        description: The `method` property in https://identity.foundation/sidetree/spec/#did-resolver-output
+        type: boolean
+      recoveryCommitment:
+        description: The `recoveryCommitment` property in https://identity.foundation/sidetree/spec/#did-resolver-output
+        type: string
+      updateCommitment:
+        description: The `updateCommitment` property in https://identity.foundation/sidetree/spec/#did-resolver-output
+        type: string
+    type: object
   schema.JSONSchema:
     additionalProperties: {}
     type: object
+  schema.VCJSONSchemaType:
+    enum:
+    - JsonSchemaCredential
+    - JsonSchema
+    type: string
+    x-enum-varnames:
+    - JSONSchemaCredentialType
+    - JSONSchemaType
   time.Duration:
     enum:
     - -9223372036854775808
@@ -1864,11 +2362,13 @@ info:
     email: tbd-developer@squareup.com
     name: TBD
     url: https://github.com/TBD54566975/ssi-service/issues
-  description: https://github.com/TBD54566975/ssi-service
+  description: 'The Self Sovereign Identity Service: Managing DIDs, Verifiable Credentials,
+    and more!'
   license:
     name: Apache 2.0
     url: http://www.apache.org/licenses/LICENSE-2.0.html
   title: SSI Service API
+  version: 0.0.3
 paths:
   /health:
     get:
@@ -1882,9 +2382,9 @@ paths:
           description: OK
           schema:
             $ref: '#/definitions/pkg_server_router.GetHealthCheckResponse'
-      summary: Health Check
+      summary: Service health check
       tags:
-      - HealthCheck
+      - ServiceInfo
   /readiness:
     get:
       consumes:
@@ -1899,18 +2399,18 @@ paths:
           description: OK
           schema:
             $ref: '#/definitions/pkg_server_router.GetReadinessResponse'
-      summary: Readiness
+      summary: Check service readiness
       tags:
-      - Readiness
+      - ServiceInfo
   /v1/credentials:
     get:
       consumes:
       - application/json
-      description: Checks for the presence of a query parameter and calls the associated
-        filtered get method. Only one parameter is allowed to be specified.
+      description: |-
+        Checks for the presence of an optional query parameter and calls the associated filtered get method.
+        Only one optional parameter is allowed to be specified.
       parameters:
-      - description: The issuer id
-        example: did:key:z6MkiTBz1ymuepAQ4HEHYSF1H8quG5GLVVQR3djdX3mDooWp
+      - description: The issuer id, e.g. did:key:z6MkiTBz1ymuepAQ4HEHYSF1H8quG5GLVVQR3djdX3mDooWp
         in: query
         name: issuer
         type: string
@@ -1921,6 +2421,16 @@ paths:
       - description: The credentialSubject.id value to filter by
         in: query
         name: subject
+        type: string
+      - description: Hint to the server of the maximum elements to return. More may
+          be returned. When not set, the server will return all elements.
+        in: query
+        name: pageSize
+        type: number
+      - description: Used to indicate to the server to return a specific page of the
+          list results. Must match a previous requests' `nextPageToken`.
+        in: query
+        name: pageToken
         type: string
       produces:
       - application/json
@@ -1937,13 +2447,13 @@ paths:
           description: Internal server error
           schema:
             type: string
-      summary: List Credentials
+      summary: List Verifiable Credentials
       tags:
-      - CredentialAPI
+      - Credentials
     put:
       consumes:
       - application/json
-      description: Create a verifiable credential
+      description: Create a Verifiable Credential
       parameters:
       - description: request body
         in: body
@@ -1966,14 +2476,14 @@ paths:
           description: Internal server error
           schema:
             type: string
-      summary: Create Credential
+      summary: Create a Verifiable Credential
       tags:
-      - CredentialAPI
+      - Credentials
   /v1/credentials/{id}:
     delete:
       consumes:
       - application/json
-      description: Delete credential by ID
+      description: Delete a Verifiable Credential by its ID
       parameters:
       - description: ID of the credential to delete
         in: path
@@ -1995,15 +2505,15 @@ paths:
           description: Internal server error
           schema:
             type: string
-      summary: Delete Credentials
+      summary: Delete a Verifiable Credential
       tags:
-      - CredentialAPI
+      - Credentials
     get:
       consumes:
       - application/json
-      description: Get credential by id
+      description: Get a Verifiable Credential by its ID
       parameters:
-      - description: ID
+      - description: ID of the credential within SSI-Service. Must be a UUID.
         in: path
         name: id
         required: true
@@ -2023,14 +2533,14 @@ paths:
           description: Internal server error
           schema:
             type: string
-      summary: Get Credential
+      summary: Get a Verifiable Credential
       tags:
-      - CredentialAPI
+      - Credentials
   /v1/credentials/{id}/status:
     get:
       consumes:
       - application/json
-      description: Get credential status by id
+      description: Get a Verifiable Credential's status by the credential's ID
       parameters:
       - description: ID
         in: path
@@ -2052,14 +2562,19 @@ paths:
           description: Internal server error
           schema:
             type: string
-      summary: Get Credential Status
+      summary: Get a Verifiable Credential's status
       tags:
-      - CredentialAPI
+      - Credentials
     put:
       consumes:
       - application/json
-      description: Update a credential's status
+      description: Update a Verifiable Credential's status
       parameters:
+      - description: ID
+        in: path
+        name: id
+        required: true
+        type: string
       - description: request body
         in: body
         name: request
@@ -2081,14 +2596,44 @@ paths:
           description: Internal server error
           schema:
             type: string
-      summary: Update Credential Status
+      summary: Update a Verifiable Credential's status
       tags:
-      - CredentialAPI
+      - Credentials
+  /v1/credentials/batch:
+    put:
+      consumes:
+      - application/json
+      description: Create a batch of Verifiable Credentials.
+      parameters:
+      - description: The batch requests
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/pkg_server_router.BatchCreateCredentialsRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/pkg_server_router.BatchCreateCredentialsResponse'
+        "400":
+          description: Bad request
+          schema:
+            type: string
+        "500":
+          description: Internal server error
+          schema:
+            type: string
+      summary: Batch create Credentials
+      tags:
+      - Credentials
   /v1/credentials/status/{id}:
     get:
       consumes:
       - application/json
-      description: Get credential status list by id.
+      description: Get a credential status list by its ID
       parameters:
       - description: ID
         in: path
@@ -2110,18 +2655,48 @@ paths:
           description: Internal server error
           schema:
             type: string
-      summary: Get Credential Status List
+      summary: Get a Credential Status List
       tags:
-      - CredentialAPI
+      - Credentials
+  /v1/credentials/status/batch:
+    put:
+      consumes:
+      - application/json
+      description: Updates the status all a batch of Verifiable Credentials.
+      parameters:
+      - description: request body
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/pkg_server_router.BatchUpdateCredentialStatusRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/pkg_server_router.BatchUpdateCredentialStatusResponse'
+        "400":
+          description: Bad request
+          schema:
+            type: string
+        "500":
+          description: Internal server error
+          schema:
+            type: string
+      summary: Batch Update a Verifiable Credential's status
+      tags:
+      - Credentials
   /v1/credentials/verification:
     put:
       consumes:
       - application/json
       description: |-
-        Verify a given credential by its id. The system does the following levels of verification:
+        Verifies a given verifiable credential. The system does the following levels of verification:
         1. Makes sure the credential has a valid signature
         2. Makes sure the credential has is not expired
-        3. Makes sure the credential complies with the VC Data Model
+        3. Makes sure the credential complies with the VC Data Model v1.1
         4. If the credential has a schema, makes sure its data complies with the schema
       parameters:
       - description: request body
@@ -2145,9 +2720,71 @@ paths:
           description: Internal server error
           schema:
             type: string
-      summary: Verify Credential
+      summary: Verify a Verifiable Credential
       tags:
-      - CredentialAPI
+      - Credentials
+  /v1/did-configurations:
+    put:
+      consumes:
+      - application/json
+      description: |-
+        Creates a DID Configuration Resource which conforms to https://identity.foundation/.well-known/resources/did-configuration/#did-configuration-resource
+        The `didConfiguration` can be hosted at the `wellKnownLocation` specified in the response.
+      parameters:
+      - description: request body
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/pkg_server_router.CreateDIDConfigurationRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/pkg_server_router.CreateDIDConfigurationResponse'
+        "400":
+          description: Bad request
+          schema:
+            type: string
+        "500":
+          description: Internal server error
+          schema:
+            type: string
+      summary: Create DID Configurations
+      tags:
+      - DIDConfigurations
+  /v1/did-configurations/verification:
+    put:
+      consumes:
+      - application/json
+      description: Verifies a DID Configuration Resource according to https://identity.foundation/.well-known/resources/did-configuration/#did-configuration-resource-verification
+      parameters:
+      - description: request body
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_tbd54566975_ssi-service_pkg_service_well-known.VerifyDIDConfigurationRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/github_com_tbd54566975_ssi-service_pkg_service_well-known.VerifyDIDConfigurationResponse'
+        "400":
+          description: Bad request
+          schema:
+            type: string
+        "500":
+          description: Internal server error
+          schema:
+            type: string
+      summary: Verifies a DID Configuration Resource
+      tags:
+      - DIDConfigurations
   /v1/dids:
     get:
       consumes:
@@ -2160,21 +2797,37 @@ paths:
           description: OK
           schema:
             $ref: '#/definitions/pkg_server_router.ListDIDMethodsResponse'
-      summary: List DID Methods
+      summary: List DID methods
       tags:
-      - DecentralizedIdentityAPI
+      - DecentralizedIdentifiers
   /v1/dids/{method}:
     get:
       consumes:
       - application/json
-      description: List DIDs by method. Checks for an optional "deleted=true" query
-        parameter, which exclusively returns DIDs that have been "Soft Deleted".
+      description: |-
+        List DIDs by method. Checks for an optional "deleted=true" query parameter, which exclusively
+        returns DIDs that have been "Soft Deleted".
       parameters:
+      - description: Method must be one returned by GET /v1/dids
+        in: path
+        name: method
+        required: true
+        type: string
       - description: When true, returns soft-deleted DIDs. Otherwise, returns DIDs
           that have not been soft-deleted. Default is false.
         in: query
         name: deleted
         type: boolean
+      - description: Hint to the server of the maximum elements to return. More may
+          be returned. When not set, the server will return all elements.
+        in: query
+        name: pageSize
+        type: number
+      - description: Used to indicate to the server to return a specific page of the
+          list results. Must match a previous requests' `nextPageToken`.
+        in: query
+        name: pageToken
+        type: string
       produces:
       - application/json
       responses:
@@ -2190,9 +2843,9 @@ paths:
           description: Internal server error
           schema:
             type: string
-      summary: List DIDs
+      summary: List DIDs by method
       tags:
-      - DecentralizedIdentityAPI
+      - DecentralizedIdentifiers
     put:
       consumes:
       - application/json
@@ -2202,17 +2855,22 @@ paths:
         registration) is left up to the clients of this API. The private key(s) created by the method are stored
         internally never leave the service boundary.
       parameters:
-      - description: request body
-        in: body
-        name: request
-        required: true
-        schema:
-          $ref: '#/definitions/pkg_server_router.CreateDIDByMethodRequest'
       - description: Method
         in: path
         name: method
         required: true
         type: string
+      - description: request body
+        in: body
+        name: request
+        required: true
+        schema:
+          allOf:
+          - $ref: '#/definitions/pkg_server_router.CreateDIDByMethodRequest'
+          - properties:
+              options:
+                $ref: '#/definitions/github_com_tbd54566975_ssi-service_pkg_service_did.CreateIONDIDOptions'
+            type: object
       produces:
       - application/json
       responses:
@@ -2228,9 +2886,9 @@ paths:
           description: Internal server error
           schema:
             type: string
-      summary: Create DID Document
+      summary: Create a DID Document
       tags:
-      - DecentralizedIdentityAPI
+      - DecentralizedIdentifiers
   /v1/dids/{method}/{id}:
     delete:
       consumes:
@@ -2239,7 +2897,7 @@ paths:
         When this is called with the correct did method and id it will flip the softDelete flag to true for the db entry.
         A user can still get the did if they know the DID ID, and the did keys will still exist, but this did will not show up in the ListDIDsByMethod call
         This facilitates a clean SSI-Service Admin UI but not leave any hanging VCs with inaccessible hanging DIDs.
-        Soft Deletes DID by method
+        Soft deletes a DID by its method
       parameters:
       - description: Method
         in: path
@@ -2266,13 +2924,13 @@ paths:
           description: Internal server error
           schema:
             type: string
-      summary: Soft Delete DID
+      summary: Soft delete a DID
       tags:
-      - DecentralizedIdentityAPI
+      - DecentralizedIdentifiers
     get:
       consumes:
       - application/json
-      description: Get DID by method
+      description: Gets a DID Document by its DID ID
       parameters:
       - description: request body
         in: body
@@ -2301,9 +2959,87 @@ paths:
           description: Bad request
           schema:
             type: string
-      summary: Get DID
+      summary: Get a DID
       tags:
-      - DecentralizedIdentityAPI
+      - DecentralizedIdentifiers
+    put:
+      consumes:
+      - application/json
+      description: |-
+        Updates a DID for which SSI is the custodian. The DID must have been previously created by calling
+        the "Create DID Document" endpoint. Currently, only ION dids support updates.
+      parameters:
+      - description: Method
+        in: path
+        name: method
+        required: true
+        type: string
+      - description: ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: request body
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/pkg_server_router.UpdateDIDByMethodRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/pkg_server_router.UpdateDIDByMethodResponse'
+        "400":
+          description: Bad request
+          schema:
+            type: string
+        "500":
+          description: Internal server error
+          schema:
+            type: string
+      summary: Updates a DID document.
+      tags:
+      - DecentralizedIdentifiers
+  /v1/dids/{method}/batch:
+    put:
+      consumes:
+      - application/json
+      description: |-
+        Create a batch of DIDs. The operation is atomic, meaning that all requests will
+        succeed or fail. This is currently only supported for the DID method named `did:key`.
+      parameters:
+      - description: Method. Only `key` is supported.
+        in: path
+        name: method
+        required: true
+        type: string
+      - description: The batch requests
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/pkg_server_router.BatchCreateDIDsRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/pkg_server_router.BatchCreateDIDsResponse'
+        "400":
+          description: Bad request
+          schema:
+            type: string
+        "500":
+          description: Internal server error
+          schema:
+            type: string
+      summary: Batch Create DIDs
+      tags:
+      - DecentralizedIdentifiers
   /v1/dids/resolver/{id}:
     get:
       consumes:
@@ -2328,12 +3064,12 @@ paths:
             type: string
       summary: Resolve a DID
       tags:
-      - DecentralizedIdentityAPI
+      - DecentralizedIdentifiers
   /v1/issuancetemplates:
     put:
       consumes:
       - application/json
-      description: Create issuance template
+      description: Creates an issuance template
       parameters:
       - description: request body
         in: body
@@ -2356,14 +3092,14 @@ paths:
           description: Internal server error
           schema:
             type: string
-      summary: Create issuance template
+      summary: Create an issuance template
       tags:
-      - IssuanceAPI
+      - IssuanceTemplates
   /v1/issuancetemplates/{id}:
     delete:
       consumes:
       - application/json
-      description: Delete issuance template by ID
+      description: Delete an issuance template by its ID
       parameters:
       - description: ID
         in: path
@@ -2385,13 +3121,13 @@ paths:
           description: Internal server error
           schema:
             type: string
-      summary: Delete issuance template
+      summary: Delete an issuance template
       tags:
-      - IssuanceAPI
+      - IssuanceTemplates
     get:
       consumes:
       - application/json
-      description: Get an issuance template by its id
+      description: Get an issuance template by its ID
       parameters:
       - description: ID
         in: path
@@ -2409,9 +3145,9 @@ paths:
           description: Bad request
           schema:
             type: string
-      summary: Get issuance template
+      summary: Get an issuance template
       tags:
-      - IssuanceAPI
+      - IssuanceTemplates
   /v1/keys:
     put:
       consumes:
@@ -2437,16 +3173,16 @@ paths:
           description: Internal server error
           schema:
             type: string
-      summary: Store Key
+      summary: Store a keys
       tags:
-      - KeyStoreAPI
+      - KeyStore
   /v1/keys/{id}:
     delete:
       consumes:
       - application/json
-      description: 'Marks the stored key as being revoked, along with the timestamps
-        of when it was revoked. NB: the key can still be used for signing. This will
-        likely be addressed before v1 is released.'
+      description: |-
+        Marks a key as being revoked, along with the timestamps of when it was revoked.
+        NB: the key can still be used for signing. This will likely be addressed before v1 is released.
       parameters:
       - description: ID of the key to revoke
         in: path
@@ -2468,9 +3204,9 @@ paths:
           description: Internal server error
           schema:
             type: string
-      summary: Revoke Key
+      summary: Revoke a key
       tags:
-      - KeyStoreAPI
+      - KeyStore
     get:
       consumes:
       - application/json
@@ -2492,15 +3228,15 @@ paths:
           description: Bad request
           schema:
             type: string
-      summary: Get Details For Key
+      summary: Get details for a key
       tags:
-      - KeyStoreAPI
+      - KeyStore
   /v1/manifests:
     get:
       consumes:
       - application/json
       description: Checks for the presence of a query parameter and calls the associated
-        filtered get method
+        filtered get method for Credential Manifests
       parameters:
       - description: string issuer
         in: query
@@ -2529,13 +3265,14 @@ paths:
           description: Internal server error
           schema:
             type: string
-      summary: List manifests
+      summary: List Credential Manifests
       tags:
-      - ManifestAPI
+      - Manifests
     put:
       consumes:
       - application/json
-      description: Create manifest
+      description: Create a Credential Manifest. Most fields map to the definitions
+        from https://identity.foundation/credential-manifest/#general-composition.
       parameters:
       - description: request body
         in: body
@@ -2558,14 +3295,14 @@ paths:
           description: Internal server error
           schema:
             type: string
-      summary: Create manifest
+      summary: Create a Credential Manifest
       tags:
-      - ManifestAPI
+      - Manifests
   /v1/manifests/{id}:
     delete:
       consumes:
       - application/json
-      description: Delete manifest by ID
+      description: Delete a Credential Manifest by its ID
       parameters:
       - description: ID
         in: path
@@ -2587,13 +3324,13 @@ paths:
           description: Internal server error
           schema:
             type: string
-      summary: Delete manifests
+      summary: Delete a Credential Manifests
       tags:
-      - ManifestAPI
+      - Manifests
     get:
       consumes:
       - application/json
-      description: Get a credential manifest by its id
+      description: Get a Credential Manifest by its ID
       parameters:
       - description: ID
         in: path
@@ -2611,14 +3348,14 @@ paths:
           description: Bad request
           schema:
             type: string
-      summary: Get manifest
+      summary: Get a Credential Manifest
       tags:
-      - ManifestAPI
+      - Manifests
   /v1/manifests/applications:
     get:
       consumes:
       - application/json
-      description: List all the existing applications.
+      description: List all the existing Credential Applications.
       produces:
       - application/json
       responses:
@@ -2630,14 +3367,16 @@ paths:
           description: Internal server error
           schema:
             type: string
-      summary: List applications
+      summary: List Credential Applications
       tags:
-      - ApplicationAPI
+      - ManifestApplications
     put:
       consumes:
       - application/json
-      description: Submit a credential application in response to a credential manifest.
-        The request body is expected to
+      description: |-
+        Submit a Credential Application in response to a Credential Manifest request. The request body is expected to
+        be a valid JWT signed by the applicant's DID, containing two top level properties: `credential_application` and `vcs`
+        according to the spec https://identity.foundation/credential-manifest/#credential-application
       parameters:
       - description: request body
         in: body
@@ -2661,14 +3400,14 @@ paths:
           description: Internal server error
           schema:
             type: string
-      summary: Submit application
+      summary: Submit a Credential Application
       tags:
-      - ApplicationAPI
+      - ManifestApplications
   /v1/manifests/applications/{id}:
     delete:
       consumes:
       - application/json
-      description: Delete application by ID
+      description: Delete a Credential Application by its ID
       parameters:
       - description: ID
         in: path
@@ -2690,13 +3429,13 @@ paths:
           description: Internal server error
           schema:
             type: string
-      summary: Delete applications
+      summary: Delete Credential Applications
       tags:
-      - ApplicationAPI
+      - ManifestApplications
     get:
       consumes:
       - application/json
-      description: Get application by id
+      description: Get a Credential Application by its ID
       parameters:
       - description: ID
         in: path
@@ -2714,15 +3453,22 @@ paths:
           description: Bad request
           schema:
             type: string
-      summary: Get application
+      summary: Get a Credential Application
       tags:
-      - ApplicationAPI
+      - ManifestApplications
   /v1/manifests/applications/{id}/review:
     put:
       consumes:
       - application/json
-      description: Reviewing an application either fulfills or denies the credential.
+      description: |-
+        Reviewing a Credential Application either fulfills or denies the credential(s) issuance according
+        to the spec https://identity.foundation/credential-manifest/#credential-application.
       parameters:
+      - description: ID
+        in: path
+        name: id
+        required: true
+        type: string
       - description: request body
         in: body
         name: request
@@ -2744,14 +3490,14 @@ paths:
           description: Internal server error
           schema:
             type: string
-      summary: Reviews an application
+      summary: Review a Credential Application
       tags:
-      - ApplicationAPI
+      - ManifestApplications
   /v1/manifests/requests:
     get:
       consumes:
       - application/json
-      description: Lists all the existing credential manifest requests
+      description: Lists all the existing Credential Manifest requests
       produces:
       - application/json
       responses:
@@ -2765,11 +3511,12 @@ paths:
             type: string
       summary: List Credential Manifest Requests
       tags:
-      - ManifestAPI
+      - ManifestRequests
     put:
       consumes:
       - application/json
-      description: Create manifest request from an existing credential manifest.
+      description: Create a Credential Manifest Request from an existing Credential
+        Manifest.
       parameters:
       - description: request body
         in: body
@@ -2792,14 +3539,14 @@ paths:
           description: Internal server error
           schema:
             type: string
-      summary: Create Manifest Request Request
+      summary: Create a Credential Manifest Request
       tags:
-      - ManifestAPI
+      - ManifestRequests
   /v1/manifests/requests/{id}:
     delete:
       consumes:
       - application/json
-      description: Delete a manifest request by its ID
+      description: Delete a Credential Manifest Request by its ID
       parameters:
       - description: ID
         in: path
@@ -2821,13 +3568,13 @@ paths:
           description: Internal server error
           schema:
             type: string
-      summary: Delete Manifest Request
+      summary: Delete a Credential Manifest Request
       tags:
-      - ManifestAPI
+      - ManifestRequests
     get:
       consumes:
       - application/json
-      description: Get a manifest request by its ID
+      description: Get a Credential Manifest Request by its ID
       parameters:
       - description: ID
         in: path
@@ -2845,14 +3592,15 @@ paths:
           description: Bad request
           schema:
             type: string
-      summary: Get Manifest Request
+      summary: Get a Credential Manifest Request
       tags:
-      - ManifestAPI
+      - ManifestRequests
   /v1/manifests/responses:
     get:
       consumes:
       - application/json
-      description: Lists all responses
+      description: Lists all responses to Credential Applications associated with
+        a Credential Manifest
       produces:
       - application/json
       responses:
@@ -2864,14 +3612,14 @@ paths:
           description: Internal server error
           schema:
             type: string
-      summary: List responses
+      summary: List Credential Manifest Responses
       tags:
-      - ResponseAPI
+      - ManifestResponses
   /v1/manifests/responses/{id}:
     delete:
       consumes:
       - application/json
-      description: Delete response by ID
+      description: Delete a Credential Manifest Response by its ID
       parameters:
       - description: ID
         in: path
@@ -2893,13 +3641,13 @@ paths:
           description: Internal server error
           schema:
             type: string
-      summary: Delete responses
+      summary: Delete a Credential Manifest Response
       tags:
-      - ResponseAPI
+      - ManifestResponses
     get:
       consumes:
       - application/json
-      description: Get response by id
+      description: Get a Credential Manifest Response by its ID https://identity.foundation/credential-manifest/#credential-response
       parameters:
       - description: ID
         in: path
@@ -2921,9 +3669,9 @@ paths:
           description: Internal server error
           schema:
             type: string
-      summary: Get response
+      summary: Get a Credential Manifest Response
       tags:
-      - ResponseAPI
+      - ManifestResponses
   /v1/operations:
     get:
       consumes:
@@ -2938,6 +3686,16 @@ paths:
           For example: `?filter=done='
         in: query
         name: filter
+        type: string
+      - description: Hint to the server of the maximum elements to return. More may
+          be returned. When not set, the server will return all elements.
+        in: query
+        name: pageSize
+        type: number
+      - description: Used to indicate to the server to return a specific page of the
+          list results. Must match a previous requests' `nextPageToken`.
+        in: query
+        name: pageToken
         type: string
       produces:
       - application/json
@@ -2956,7 +3714,7 @@ paths:
             type: string
       summary: List operations
       tags:
-      - OperationAPI
+      - Operations
   /v1/operations/{id}:
     get:
       consumes:
@@ -2985,12 +3743,12 @@ paths:
             type: string
       summary: Get an operation
       tags:
-      - OperationAPI
+      - Operations
   /v1/operations/cancel/{id}:
     get:
       consumes:
       - application/json
-      description: Cancels an ongoing operation, if possible.
+      description: Cancels an active operation, if possible.
       parameters:
       - description: ID
         in: path
@@ -3012,14 +3770,14 @@ paths:
           description: Internal server error
           schema:
             type: string
-      summary: Cancel an ongoing operation
+      summary: Cancel an operation
       tags:
-      - OperationAPI
+      - Operations
   /v1/presentations/definitions:
     get:
       consumes:
       - application/json
-      description: Lists all the existing presentation definitions
+      description: Lists all the existing Presentation Definitions
       produces:
       - application/json
       responses:
@@ -3037,11 +3795,11 @@ paths:
             type: string
       summary: List Presentation Definitions
       tags:
-      - PresentationDefinitionAPI
+      - Presentations
     put:
       consumes:
       - application/json
-      description: Create presentation definition
+      description: Create a Presentation Definition https://identity.foundation/presentation-exchange/spec/v2.0.0/#presentation-definition
       parameters:
       - description: request body
         in: body
@@ -3064,14 +3822,14 @@ paths:
           description: Internal server error
           schema:
             type: string
-      summary: Create PresentationDefinition
+      summary: Create a Presentation Definition
       tags:
-      - PresentationDefinitionAPI
+      - Presentations
   /v1/presentations/definitions/{id}:
     delete:
       consumes:
       - application/json
-      description: Delete a presentation definition by its ID
+      description: Delete a Presentation Definition by its ID
       parameters:
       - description: ID
         in: path
@@ -3093,13 +3851,13 @@ paths:
           description: Internal server error
           schema:
             type: string
-      summary: Delete PresentationDefinition
+      summary: Delete a Presentation Definition
       tags:
-      - PresentationDefinitionAPI
+      - Presentations
     get:
       consumes:
       - application/json
-      description: Get a presentation definition by its ID
+      description: Get a Presentation Definition by its ID
       parameters:
       - description: ID
         in: path
@@ -3117,14 +3875,34 @@ paths:
           description: Bad request
           schema:
             type: string
-      summary: Get PresentationDefinition
+      summary: Get a Presentation Definition
       tags:
-      - PresentationDefinitionAPI
+      - Presentations
   /v1/presentations/requests:
+    get:
+      consumes:
+      - application/json
+      description: Lists all the existing Presentation Requests
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/pkg_server_router.ListPresentationRequestsResponse'
+        "500":
+          description: Internal server error
+          schema:
+            type: string
+      summary: List Presentation Requests
+      tags:
+      - PresentationRequests
     put:
       consumes:
       - application/json
-      description: Create presentation request from an existing presentation definition.
+      description: |-
+        Create a Presentation Request from an existing Presentation Definition with an existing DID according
+        to the spec https://identity.foundation/presentation-exchange/spec/v2.0.0/#presentation-request
       parameters:
       - description: request body
         in: body
@@ -3147,14 +3925,14 @@ paths:
           description: Internal server error
           schema:
             type: string
-      summary: Create Presentation Request
+      summary: Create a Presentation Request
       tags:
-      - PresentationRequestAPI
+      - PresentationRequests
   /v1/presentations/requests/{id}:
     delete:
       consumes:
       - application/json
-      description: Delete a presentation request by its ID
+      description: Delete a Presentation Request by its ID
       parameters:
       - description: ID
         in: path
@@ -3176,13 +3954,13 @@ paths:
           description: Internal server error
           schema:
             type: string
-      summary: Delete PresentationRequest
+      summary: Delete a Presentation Request
       tags:
-      - PresentationRequestAPI
+      - PresentationRequests
     get:
       consumes:
       - application/json
-      description: Get a presentation request by its ID
+      description: Get a Presentation Request by its ID
       parameters:
       - description: ID
         in: path
@@ -3200,20 +3978,30 @@ paths:
           description: Bad request
           schema:
             type: string
-      summary: Get Presentation Request
+      summary: Get a Presentation Request
       tags:
-      - PresentationRequestAPI
+      - PresentationRequests
   /v1/presentations/submissions:
     get:
       consumes:
       - application/json
-      description: List existing submissions according to a filtering query. The `filter`
-        field follows the syntax described in https://google.aip.dev/160.
+      description: List existing Presentation Submissions according to a filtering
+        query. The `filter` field follows the syntax described in https://google.aip.dev/160.
       parameters:
       - description: 'A standard filter expression conforming to https://google.aip.dev/160.
           For example: `?filter=status='
         in: query
         name: filter
+        type: string
+      - description: Hint to the server of the maximum elements to return. More may
+          be returned. When not set, the server will return all elements.
+        in: query
+        name: pageSize
+        type: number
+      - description: Used to indicate to the server to return a specific page of the
+          list results. Must match a previous requests' `nextPageToken`.
+        in: query
+        name: pageToken
         type: string
       produces:
       - application/json
@@ -3230,13 +4018,14 @@ paths:
           description: Internal server error
           schema:
             type: string
-      summary: List Submissions
+      summary: List Presentation Submissions
       tags:
-      - PresentationSubmissionAPI
+      - PresentationSubmissions
     put:
       consumes:
       - application/json
-      description: Creates a submission in this server ready to be reviewed.
+      description: Accepts a Presentation Submission (https://identity.foundation/presentation-exchange/spec/v2.0.0/#presentation-submission)
+        in this server ready to be reviewed.
       parameters:
       - description: request body
         in: body
@@ -3259,14 +4048,14 @@ paths:
           description: Internal server error
           schema:
             type: string
-      summary: Create Submission
+      summary: Create a Presentation Submission
       tags:
-      - PresentationSubmissionAPI
+      - PresentationSubmissions
   /v1/presentations/submissions/{id}:
     get:
       consumes:
       - application/json
-      description: Get a submission by its ID
+      description: Get a Presentation Submission by its ID
       parameters:
       - description: ID
         in: path
@@ -3284,17 +4073,22 @@ paths:
           description: Bad request
           schema:
             type: string
-      summary: Get Submission
+      summary: Get a Presentation Submission
       tags:
-      - PresentationSubmissionAPI
+      - PresentationSubmissions
   /v1/presentations/submissions/{id}/review:
     put:
       consumes:
       - application/json
-      description: Reviews a pending submission. After this method is called, the
-        operation with `id==presentations/submissions/{submission_id}` will be updated
-        with the result of this invocation.
+      description: |-
+        Reviews a pending Presentation Submission. After this method is called, the operation with
+        `id==presentations/submissions/{submission_id}` will be updated with the result of this invocation.
       parameters:
+      - description: ID
+        in: path
+        name: id
+        required: true
+        type: string
       - description: request body
         in: body
         name: request
@@ -3316,14 +4110,64 @@ paths:
           description: Internal server error
           schema:
             type: string
-      summary: Review a pending submission
+      summary: Review a pending Presentation Submission
       tags:
-      - PresentationSubmissionAPI
+      - PresentationSubmissions
+  /v1/presentations/verification:
+    put:
+      consumes:
+      - application/json
+      description: |-
+        Verifies a given presentation. The system does the following levels of verification:
+        1. Makes sure the presentation has a valid signature
+        2. Makes sure the presentation is not expired
+        3. Makes sure the presentation complies with https://www.w3.org/TR/vc-data-model/#presentations-0 of VC Data Model v1.1
+        4. For each credential in the presentation, makes sure:
+        a. Makes sure the credential has a valid signature
+        b. Makes sure the credential is not expired
+        c. Makes sure the credential complies with the VC Data Model
+        d. If the credential has a schema, makes sure its data complies with the schema
+      parameters:
+      - description: request body
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/pkg_server_router.VerifyPresentationRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/pkg_server_router.VerifyPresentationResponse'
+        "400":
+          description: Bad request
+          schema:
+            type: string
+        "500":
+          description: Internal server error
+          schema:
+            type: string
+      summary: Verifies a Verifiable Presentation
+      tags:
+      - Presentations
   /v1/schemas:
     get:
       consumes:
       - application/json
-      description: List schemas
+      description: List Credential Schemas stored by the service
+      parameters:
+      - description: Hint to the server of the maximum elements to return. More may
+          be returned. When not set, the server will return all elements.
+        in: query
+        name: pageSize
+        type: number
+      - description: Used to indicate to the server to return a specific page of the
+          list results. Must match a previous requests' `nextPageToken`.
+        in: query
+        name: pageToken
+        type: string
       produces:
       - application/json
       responses:
@@ -3335,13 +4179,13 @@ paths:
           description: Internal server error
           schema:
             type: string
-      summary: List Schemas
+      summary: List Credential Schemas
       tags:
-      - SchemaAPI
+      - Schemas
     put:
       consumes:
       - application/json
-      description: Create schema
+      description: Create a schema for use with a Verifiable Credential
       parameters:
       - description: request body
         in: body
@@ -3364,14 +4208,14 @@ paths:
           description: Internal server error
           schema:
             type: string
-      summary: Create Schema
+      summary: Create a Credential Schema
       tags:
-      - SchemaAPI
+      - Schemas
   /v1/schemas/{id}:
     delete:
       consumes:
       - application/json
-      description: Delete a schema by its ID
+      description: Delete a Credential Schema by its ID
       parameters:
       - description: ID
         in: path
@@ -3393,13 +4237,13 @@ paths:
           description: Internal server error
           schema:
             type: string
-      summary: Delete Schema
+      summary: Delete a Credential Schema
       tags:
-      - SchemaAPI
+      - Schemas
     get:
       consumes:
       - application/json
-      description: Get a schema by its ID
+      description: Get a Credential Schema by its ID
       parameters:
       - description: ID
         in: path
@@ -3417,14 +4261,14 @@ paths:
           description: Bad request
           schema:
             type: string
-      summary: Get Schema
+      summary: Get a Credential Schema
       tags:
-      - SchemaAPI
+      - Schemas
   /v1/webhooks:
     get:
       consumes:
       - application/json
-      description: Lists all webhooks
+      description: Lists all webhooks stored by the service
       produces:
       - application/json
       responses:
@@ -3436,13 +4280,13 @@ paths:
           description: Internal server error
           schema:
             type: string
-      summary: List Webhooks
+      summary: List webhooks
       tags:
-      - WebhookAPI
+      - Webhooks
     put:
       consumes:
       - application/json
-      description: Create webhook
+      description: Creates a webhook
       parameters:
       - description: request body
         in: body
@@ -3465,18 +4309,23 @@ paths:
           description: Internal server error
           schema:
             type: string
-      summary: Create Webhook
+      summary: Create a webhook
       tags:
-      - WebhookAPI
+      - Webhooks
   /v1/webhooks/{noun}/{verb}:
     get:
       consumes:
       - application/json
       description: Get a webhook by its ID
       parameters:
-      - description: ID
+      - description: noun
         in: path
-        name: id
+        name: noun
+        required: true
+        type: string
+      - description: verb
+        in: path
+        name: verb
         required: true
         type: string
       produces:
@@ -3490,18 +4339,28 @@ paths:
           description: Bad request
           schema:
             type: string
-      summary: Get Webhook
+      summary: Get a webhook
       tags:
-      - WebhookAPI
+      - Webhooks
   /v1/webhooks/{noun}/{verb}/{url}:
     delete:
       consumes:
       - application/json
       description: Delete a webhook by its ID
       parameters:
-      - description: ID
+      - description: noun
         in: path
-        name: id
+        name: noun
+        required: true
+        type: string
+      - description: verb
+        in: path
+        name: verb
+        required: true
+        type: string
+      - description: url
+        in: path
+        name: url
         required: true
         type: string
       produces:
@@ -3519,9 +4378,9 @@ paths:
           description: Internal server error
           schema:
             type: string
-      summary: Delete Webhook
+      summary: Delete a webhook
       tags:
-      - WebhookAPI
+      - Webhooks
   /v1/webhooks/nouns:
     get:
       consumes:
@@ -3534,9 +4393,9 @@ paths:
           description: OK
           schema:
             $ref: '#/definitions/github_com_tbd54566975_ssi-service_pkg_service_webhook.GetSupportedNounsResponse'
-      summary: Get Supported Nouns
+      summary: Get supported webhook nouns
       tags:
-      - WebhookAPI
+      - Webhooks
   /v1/webhooks/verbs:
     get:
       consumes:
@@ -3549,7 +4408,7 @@ paths:
           description: OK
           schema:
             $ref: '#/definitions/github_com_tbd54566975_ssi-service_pkg_service_webhook.GetSupportedVerbsResponse'
-      summary: Get Supported Verbs
+      summary: Get supported webhook verbs
       tags:
-      - WebhookAPI
+      - Webhooks
 swagger: "2.0"

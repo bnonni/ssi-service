@@ -25,10 +25,25 @@ func TestCreateIssuerDIDWebIntegration(t *testing.T) {
 	assert.Contains(t, issuerDID, "did:web")
 	SetValue(didWebContext, "issuerDID", issuerDID)
 
-	issuerKID, err := getJSONElement(didWebOutput, "$.did.verificationMethod[0].id")
+	verificationMethodID, err := getJSONElement(didWebOutput, "$.did.verificationMethod[0].id")
 	assert.NoError(t, err)
-	assert.NotEmpty(t, issuerKID)
-	SetValue(didWebContext, "issuerKID", issuerKID)
+	assert.NotEmpty(t, verificationMethodID)
+	SetValue(didWebContext, "verificationMethodID", verificationMethodID)
+}
+
+func TestListDIDWebIntegration(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test")
+	}
+
+	listWebDIDsOutput, err := ListWebDIDs()
+	assert.NoError(t, err)
+
+	issuerDID, err := GetValue(didWebContext, "issuerDID")
+	assert.NoError(t, err)
+	assert.NotEmpty(t, issuerDID)
+
+	assert.Contains(t, listWebDIDsOutput, issuerDID)
 }
 
 func TestCreateAliceDIDKeyForDIDWebIntegration(t *testing.T) {
@@ -78,19 +93,19 @@ func TestDIDWebCreateVerifiableCredentialIntegration(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NotEmpty(t, issuerDID)
 
-	issuerKID, err := GetValue(didWebContext, "issuerKID")
+	verificationMethodID, err := GetValue(didWebContext, "verificationMethodID")
 	assert.NoError(t, err)
-	assert.NotEmpty(t, issuerKID)
+	assert.NotEmpty(t, verificationMethodID)
 
 	schemaID, err := GetValue(didWebContext, "schemaID")
 	assert.NoError(t, err)
 	assert.NotEmpty(t, schemaID)
 
 	vcOutput, err := CreateVerifiableCredential(credInputParams{
-		IssuerID:  issuerDID.(string),
-		IssuerKID: issuerKID.(string),
-		SchemaID:  schemaID.(string),
-		SubjectID: issuerDID.(string),
+		IssuerID:             issuerDID.(string),
+		VerificationMethodID: verificationMethodID.(string),
+		SchemaID:             schemaID.(string),
+		SubjectID:            issuerDID.(string),
 	})
 	assert.NoError(t, err)
 	assert.NotEmpty(t, vcOutput)
@@ -110,18 +125,18 @@ func TestDIDWebCreateCredentialManifestIntegration(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NotEmpty(t, issuerDID)
 
-	issuerKID, err := GetValue(didWebContext, "issuerKID")
+	verificationMethodID, err := GetValue(didWebContext, "verificationMethodID")
 	assert.NoError(t, err)
-	assert.NotEmpty(t, issuerKID)
+	assert.NotEmpty(t, verificationMethodID)
 
 	schemaID, err := GetValue(didWebContext, "schemaID")
 	assert.NoError(t, err)
 	assert.NotEmpty(t, schemaID)
 
 	cmOutput, err := CreateCredentialManifest(credManifestParams{
-		IssuerID:  issuerDID.(string),
-		IssuerKID: issuerKID.(string),
-		SchemaID:  schemaID.(string),
+		IssuerID:             issuerDID.(string),
+		VerificationMethodID: verificationMethodID.(string),
+		SchemaID:             schemaID.(string),
 	})
 	assert.NoError(t, err)
 

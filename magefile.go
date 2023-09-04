@@ -112,13 +112,19 @@ func Spec() error {
 		return err
 	}
 
-	if err := sh.Run(swagCommand, "fmt", "-d", "pkg/server/router"); err != nil {
+	// We need to download deps first as a workaround to https://github.com/TBD54566975/ssi-service/issues/515
+	if err := sh.Run(Go, "mod", "download"); err != nil {
+		logrus.WithError(err).Error("failed to download dependencies")
+		return err
+	}
+
+	if err := sh.Run(swagCommand, "fmt", "-d", "pkg/server/router,cmd/ssiservice"); err != nil {
 		logrus.WithError(err).Error("failed to format swagger docs")
 		return err
 	}
 
 	// We need to enable dependencies because many of our external API objects have ssi-sdk objects.
-	return sh.Run(swagCommand, "init", "-g", "cmd/ssiservice/main.go", "--overridesFile", "doc/overrides.swaggo", "--pd", "--parseInternal", "-o", "doc", "-ot", "go,yaml")
+	return sh.Run(swagCommand, "init", "-g", "cmd/ssiservice/main.go", "--overridesFile", "doc/overrides.swaggo", "--pd", "--parseInternal", "-o", "doc", "-ot", "yaml")
 }
 
 func runCITests(extraTestArgs ...string) error {

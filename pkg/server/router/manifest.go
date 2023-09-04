@@ -7,8 +7,10 @@ import (
 
 	"github.com/TBD54566975/ssi-sdk/credential/exchange"
 	manifestsdk "github.com/TBD54566975/ssi-sdk/credential/manifest"
+	"github.com/TBD54566975/ssi-sdk/did"
 	"github.com/gin-gonic/gin"
 	"github.com/goccy/go-json"
+
 	"github.com/tbd54566975/ssi-service/pkg/service/common"
 	"github.com/tbd54566975/ssi-service/pkg/service/manifest/model"
 
@@ -44,26 +46,53 @@ func NewManifestRouter(s svcframework.Service) (*ManifestRouter, error) {
 // CreateManifestRequest is the request body for creating a manifest, which populates all remaining fields
 // and builds a well-formed manifest object.
 type CreateManifestRequest struct {
-	Name                   *string                          `json:"name,omitempty"`
-	Description            *string                          `json:"description,omitempty"`
-	IssuerDID              string                           `json:"issuerDid" validate:"required"`
-	IssuerKID              string                           `json:"issuerKid" validate:"required"`
-	IssuerName             *string                          `json:"issuerName,omitempty"`
-	ClaimFormat            *exchange.ClaimFormat            `json:"format" validate:"required,dive"`
-	OutputDescriptors      []manifestsdk.OutputDescriptor   `json:"outputDescriptors" validate:"required,dive"`
-	PresentationDefinition *exchange.PresentationDefinition `json:"presentationDefinition,omitempty" validate:"omitempty,dive"`
+	// Summarizing title for the Manifest in question.
+	// Optional.
+	Name *string `json:"name,omitempty"`
+
+	// Explains what the Manifest in question is generally offering in exchange for meeting its requirements.
+	// Optional.
+	Description *string `json:"description,omitempty"`
+
+	// DID that identifies who the issuer of the credential(s) will be.
+	// Required.
+	IssuerDID string `json:"issuerDid" validate:"required"`
+
+	// The id of the verificationMethod (see https://www.w3.org/TR/did-core/#verification-methods) who's privateKey is
+	// stored in ssi-service. The verificationMethod must be part of the did document associated with `issuer`.
+	// The private key associated with the verificationMethod's publicKey will be used to sign the issued credentials.
+	// Required.
+	VerificationMethodID string `json:"verificationMethodId" validate:"required" example:"did:key:z6MkkZDjunoN4gyPMx5TSy7Mfzw22D2RZQZUcx46bii53Ex3#z6MkkZDjunoN4gyPMx5TSy7Mfzw22D2RZQZUcx46bii53Ex3"`
+
+	// Human-readable name the Issuer wishes to be recognized by.
+	// Optional.
+	IssuerName *string `json:"issuerName,omitempty"`
+
+	// Formats that the issuer can support when issuing the credential. At least one needs to be set. We currently only
+	// support `jwt_vc` for issuance. See https://identity.foundation/claim-format-registry/#registry for the definition.
+	// TODO: support different claim formats https://github.com/TBD54566975/ssi-service/issues/96
+	ClaimFormat *exchange.ClaimFormat `json:"format" validate:"required,dive"`
+
+	// Array of objects as defined in https://identity.foundation/credential-manifest/#output-descriptor.
+	OutputDescriptors []manifestsdk.OutputDescriptor `json:"outputDescriptors" validate:"required,dive"`
+
+	// Describes what proofs are required in order to issue this credential. When present, only `id` or `value` may be
+	// populated, but not both.
+	// Optional.
+	*model.PresentationDefinitionRef
 }
 
 func (c CreateManifestRequest) ToServiceRequest() model.CreateManifestRequest {
+	verificationMethodID := did.FullyQualifiedVerificationMethodID(c.IssuerDID, c.VerificationMethodID)
 	return model.CreateManifestRequest{
-		Name:                   c.Name,
-		Description:            c.Description,
-		IssuerDID:              c.IssuerDID,
-		IssuerKID:              c.IssuerKID,
-		IssuerName:             c.IssuerName,
-		OutputDescriptors:      c.OutputDescriptors,
-		ClaimFormat:            c.ClaimFormat,
-		PresentationDefinition: c.PresentationDefinition,
+		Name:                               c.Name,
+		Description:                        c.Description,
+		IssuerDID:                          c.IssuerDID,
+		FullyQualifiedVerificationMethodID: verificationMethodID,
+		IssuerName:                         c.IssuerName,
+		OutputDescriptors:                  c.OutputDescriptors,
+		ClaimFormat:                        c.ClaimFormat,
+		PresentationDefinitionRef:          c.PresentationDefinitionRef,
 	}
 }
 
@@ -73,9 +102,9 @@ type CreateManifestResponse struct {
 
 // CreateManifest godoc
 //
-//	@Summary		Create manifest
-//	@Description	Create manifest
-//	@Tags			ManifestAPI
+//	@Summary		Create a Credential Manifest
+//	@Description	Create a Credential Manifest. Most fields map to the definitions from https://identity.foundation/credential-manifest/#general-composition.
+//	@Tags			Manifests
 //	@Accept			json
 //	@Produce		json
 //	@Param			request	body		CreateManifestRequest	true	"request body"
@@ -116,9 +145,9 @@ type ListManifestResponse struct {
 
 // GetManifest godoc
 //
-//	@Summary		Get manifest
-//	@Description	Get a credential manifest by its id
-//	@Tags			ManifestAPI
+//	@Summary		Get a Credential Manifest
+//	@Description	Get a Credential Manifest by its ID
+//	@Tags			Manifests
 //	@Accept			json
 //	@Produce		json
 //	@Param			id	path		string	true	"ID"
@@ -153,9 +182,9 @@ type ListManifestsResponse struct {
 
 // ListManifests godoc
 //
-//	@Summary		List manifests
-//	@Description	Checks for the presence of a query parameter and calls the associated filtered get method
-//	@Tags			ManifestAPI
+//	@Summary		List Credential Manifests
+//	@Description	Checks for the presence of a query parameter and calls the associated filtered get method for Credential Manifests
+//	@Tags			Manifests
 //	@Accept			json
 //	@Produce		json
 //	@Param			issuer	query		string	false	"string issuer"
@@ -187,9 +216,9 @@ func (mr ManifestRouter) ListManifests(c *gin.Context) {
 
 // DeleteManifest godoc
 //
-//	@Summary		Delete manifests
-//	@Description	Delete manifest by ID
-//	@Tags			ManifestAPI
+//	@Summary		Delete a Credential Manifests
+//	@Description	Delete a Credential Manifest by its ID
+//	@Tags			Manifests
 //	@Accept			json
 //	@Produce		json
 //	@Param			id	path		string	true	"ID"
@@ -215,9 +244,9 @@ func (mr ManifestRouter) DeleteManifest(c *gin.Context) {
 }
 
 type SubmitApplicationRequest struct {
-	// Contains the following properties:
-	// Application  manifestsdk.CredentialApplication `json:"credential_application" validate:"required"`
-	// Credentials  []interface{}                     `json:"vcs" validate:"required"`
+	// A JWT signed by the applicant. The payload MUST contain the following properties:
+	// - `credential_application`: an object of type manifest.CredentialApplication (specified in https://identity.foundation/credential-manifest/#credential-application).
+	// - `vcs`: an array of Verifiable Credentials.
 	ApplicationJWT keyaccess.JWT `json:"applicationJwt" validate:"required"`
 }
 
@@ -287,12 +316,11 @@ type SubmitApplicationResponse struct {
 
 // SubmitApplication godoc
 //
-//	@Summary		Submit application
-//	@Description	Submit a credential application in response to a credential manifest. The request body is expected to
-//
-// be a valid JWT signed by the applicant's DID, containing two top level properties: credential_application and vcs.
-//
-//	@Tags			ApplicationAPI
+//	@Summary		Submit a Credential Application
+//	@Description	Submit a Credential Application in response to a Credential Manifest request. The request body is expected to
+//	@Description	be a valid JWT signed by the applicant's DID, containing two top level properties: `credential_application` and `vcs`
+//	@Description	according to the spec https://identity.foundation/credential-manifest/#credential-application
+//	@Tags			ManifestApplications
 //	@Accept			json
 //	@Produce		json
 //	@Param			request	body		SubmitApplicationRequest	true	"request body"
@@ -332,9 +360,9 @@ type GetApplicationResponse struct {
 
 // GetApplication godoc
 //
-//	@Summary		Get application
-//	@Description	Get application by id
-//	@Tags			ApplicationAPI
+//	@Summary		Get a Credential Application
+//	@Description	Get a Credential Application by its ID
+//	@Tags			ManifestApplications
 //	@Accept			json
 //	@Produce		json
 //	@Param			id	path		string	true	"ID"
@@ -369,9 +397,9 @@ type ListApplicationsResponse struct {
 
 // ListApplications godoc
 //
-//	@Summary		List applications
-//	@Description	List all the existing applications.
-//	@Tags			ApplicationAPI
+//	@Summary		List Credential Applications
+//	@Description	List all the existing Credential Applications.
+//	@Tags			ManifestApplications
 //	@Accept			json
 //	@Produce		json
 //	@Success		200	{object}	ListApplicationsResponse
@@ -391,9 +419,9 @@ func (mr ManifestRouter) ListApplications(c *gin.Context) {
 
 // DeleteApplication godoc
 //
-//	@Summary		Delete applications
-//	@Description	Delete application by ID
-//	@Tags			ApplicationAPI
+//	@Summary		Delete Credential Applications
+//	@Description	Delete a Credential Application by its ID
+//	@Tags			ManifestApplications
 //	@Accept			json
 //	@Produce		json
 //	@Param			id	path		string	true	"ID"
@@ -427,9 +455,9 @@ type GetResponseResponse struct {
 
 // GetResponse godoc
 //
-//	@Summary		Get response
-//	@Description	Get response by id
-//	@Tags			ResponseAPI
+//	@Summary		Get a Credential Manifest Response
+//	@Description	Get a Credential Manifest Response by its ID https://identity.foundation/credential-manifest/#credential-response
+//	@Tags			ManifestResponses
 //	@Accept			json
 //	@Produce		json
 //	@Param			id	path		string	true	"ID"
@@ -466,9 +494,9 @@ type ListResponsesResponse struct {
 
 // ListResponses godoc
 //
-//	@Summary		List responses
-//	@Description	Lists all responses
-//	@Tags			ResponseAPI
+//	@Summary		List Credential Manifest Responses
+//	@Description	Lists all responses to Credential Applications associated with a Credential Manifest
+//	@Tags			ManifestResponses
 //	@Accept			json
 //	@Produce		json
 //	@Success		200	{object}	ListResponsesResponse
@@ -488,9 +516,9 @@ func (mr ManifestRouter) ListResponses(c *gin.Context) {
 
 // DeleteResponse godoc
 //
-//	@Summary		Delete responses
-//	@Description	Delete response by ID
-//	@Tags			ResponseAPI
+//	@Summary		Delete a Credential Manifest Response
+//	@Description	Delete a Credential Manifest Response by its ID
+//	@Tags			ManifestResponses
 //	@Accept			json
 //	@Produce		json
 //	@Param			id	path		string	true	"ID"
@@ -535,11 +563,13 @@ func (r ReviewApplicationRequest) toServiceRequest(id string) model.ReviewApplic
 
 // ReviewApplication godoc
 //
-//	@Summary		Reviews an application
-//	@Description	Reviewing an application either fulfills or denies the credential.
-//	@Tags			ApplicationAPI
+//	@Summary		Review a Credential Application
+//	@Description	Reviewing a Credential Application either fulfills or denies the credential(s) issuance according
+//	@Description	to the spec https://identity.foundation/credential-manifest/#credential-application.
+//	@Tags			ManifestApplications
 //	@Accept			json
 //	@Produce		json
+//	@Param			id		path		string						true	"ID"
 //	@Param			request	body		ReviewApplicationRequest	true	"request body"
 //	@Success		201		{object}	SubmitApplicationResponse	"Credential Response"
 //	@Failure		400		{string}	string						"Bad request"
@@ -574,7 +604,7 @@ func (mr ManifestRouter) ReviewApplication(c *gin.Context) {
 }
 
 type CreateManifestRequestRequest struct {
-	*CommonCreateRequestRequest
+	*CommonCreateRequestRequest `validate:"required,dive"`
 
 	// ID of the credential manifest to use for this request.
 	CredentialManifestID string `json:"credentialManifestId" validate:"required"`
@@ -586,9 +616,9 @@ type CreateManifestRequestResponse struct {
 
 // CreateRequest godoc
 //
-//	@Summary		Create Manifest Request Request
-//	@Description	Create manifest request from an existing credential manifest.
-//	@Tags			ManifestAPI
+//	@Summary		Create a Credential Manifest Request
+//	@Description	Create a Credential Manifest Request from an existing Credential Manifest.
+//	@Tags			ManifestRequests
 //	@Accept			json
 //	@Produce		json
 //	@Param			request	body		CreateManifestRequestRequest	true	"request body"
@@ -623,7 +653,7 @@ func (mr ManifestRouter) CreateRequest(c *gin.Context) {
 }
 
 func (mr ManifestRouter) serviceRequestFromRequest(request CreateManifestRequestRequest) (*model.Request, error) {
-	req, err := commonRequestToServiceRequest(request.CommonCreateRequestRequest, mr.service.Config().ExpirationDuration)
+	req, err := commonRequestToServiceRequest(request.CommonCreateRequestRequest)
 	if err != nil {
 		return nil, err
 	}
@@ -642,8 +672,8 @@ type ListManifestRequestsResponse struct {
 // ListRequests godoc
 //
 //	@Summary		List Credential Manifest Requests
-//	@Description	Lists all the existing credential manifest requests
-//	@Tags			ManifestAPI
+//	@Description	Lists all the existing Credential Manifest requests
+//	@Tags			ManifestRequests
 //	@Accept			json
 //	@Produce		json
 //	@Success		200	{object}	ListManifestRequestsResponse
@@ -669,9 +699,9 @@ type GetManifestRequestResponse struct {
 
 // GetRequest godoc
 //
-//	@Summary		Get Manifest Request
-//	@Description	Get a manifest request by its ID
-//	@Tags			ManifestAPI
+//	@Summary		Get a Credential Manifest Request
+//	@Description	Get a Credential Manifest Request by its ID
+//	@Tags			ManifestRequests
 //	@Accept			json
 //	@Produce		json
 //	@Param			id	path		string	true	"ID"
@@ -695,9 +725,9 @@ func (mr ManifestRouter) GetRequest(c *gin.Context) {
 
 // DeleteRequest godoc
 //
-//	@Summary		Delete Manifest Request
-//	@Description	Delete a manifest request by its ID
-//	@Tags			ManifestAPI
+//	@Summary		Delete a Credential Manifest Request
+//	@Description	Delete a Credential Manifest Request by its ID
+//	@Tags			ManifestRequests
 //	@Accept			json
 //	@Produce		json
 //	@Param			id	path		string	true	"ID"
@@ -722,23 +752,19 @@ func (mr ManifestRouter) DeleteRequest(c *gin.Context) {
 	framework.Respond(c, nil, http.StatusNoContent)
 }
 
-func commonRequestToServiceRequest(request *CommonCreateRequestRequest, expirationDuration time.Duration) (*common.Request, error) {
-	var expiration time.Time
-	var err error
-
+func commonRequestToServiceRequest(request *CommonCreateRequestRequest) (*common.Request, error) {
+	req := &common.Request{
+		Audience:             request.Audience,
+		IssuerDID:            request.IssuerDID,
+		VerificationMethodID: request.VerificationMethodID,
+		CallbackURL:          request.CallbackURL,
+	}
 	if request.Expiration != "" {
-		expiration, err = time.Parse(time.RFC3339, request.Expiration)
+		expiration, err := time.Parse(time.RFC3339, request.Expiration)
 		if err != nil {
 			return nil, err
 		}
-	} else {
-		expiration = time.Now().Add(expirationDuration)
-	}
-	req := &common.Request{
-		Audience:   request.Audience,
-		Expiration: expiration,
-		IssuerDID:  request.IssuerDID,
-		IssuerKID:  request.IssuerKID,
+		req.Expiration = &expiration
 	}
 	return req, nil
 }

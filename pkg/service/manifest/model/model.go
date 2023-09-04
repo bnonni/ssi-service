@@ -5,6 +5,8 @@ import (
 
 	"github.com/TBD54566975/ssi-sdk/credential/exchange"
 	manifestsdk "github.com/TBD54566975/ssi-sdk/credential/manifest"
+	sdkutil "github.com/TBD54566975/ssi-sdk/util"
+
 	"github.com/tbd54566975/ssi-service/pkg/service/common"
 
 	cred "github.com/tbd54566975/ssi-service/internal/credential"
@@ -15,15 +17,21 @@ import (
 // Manifest
 
 type CreateManifestRequest struct {
-	Name              *string                        `json:"name,omitempty"`
-	Description       *string                        `json:"description,omitempty"`
-	IssuerDID         string                         `json:"issuerDid" validate:"required"`
-	IssuerKID         string                         `json:"issuerKid" validate:"required"`
-	IssuerName        *string                        `json:"issuerName,omitempty"`
-	OutputDescriptors []manifestsdk.OutputDescriptor `json:"outputDescriptors" validate:"required,dive"`
-	ClaimFormat       *exchange.ClaimFormat          `json:"format" validate:"required,dive"`
-	// TODO: Allow for specifying the presentation definition only by id. https://github.com/TBD54566975/ssi-service/issues/491
-	PresentationDefinition *exchange.PresentationDefinition `json:"presentationDefinition,omitempty" validate:"omitempty,dive"`
+	Name                               *string                        `json:"name,omitempty"`
+	Description                        *string                        `json:"description,omitempty"`
+	IssuerDID                          string                         `json:"issuerDid" validate:"required"`
+	FullyQualifiedVerificationMethodID string                         `json:"fullyQualifiedVerificationMethodId" validate:"required"`
+	IssuerName                         *string                        `json:"issuerName,omitempty"`
+	OutputDescriptors                  []manifestsdk.OutputDescriptor `json:"outputDescriptors" validate:"required,dive"`
+	ClaimFormat                        *exchange.ClaimFormat          `json:"format" validate:"required,dive"`
+	PresentationDefinitionRef          *PresentationDefinitionRef     `json:"presentationDefinitionRef,omitempty" validate:"omitempty,dive"`
+}
+
+func (r CreateManifestRequest) IsValid() error {
+	if err := sdkutil.IsValidStruct(r); err != nil {
+		return err
+	}
+	return common.ValidateVerificationMethodID(r.FullyQualifiedVerificationMethodID, r.IssuerDID)
 }
 
 type CreateManifestResponse struct {
@@ -174,8 +182,16 @@ type Request struct {
 	// ID of the credential manifest used for this request.
 	ManifestID string `json:"manifestId" validate:"required"`
 
-	// CredentialManifestJWT is a JWT token with a "presentation_definition" claim within it. The
-	// value of the field named "presentation_definition.id" matches PresentationDefinitionID.
+	// CredentialManifestJWT is a JWT token with a "presentation_definition" claim and an optional "callbackUrl" claim
+	// within it. The value of the field named "presentation_definition.id" matches PresentationDefinitionID.
 	// This is an output only field.
 	CredentialManifestJWT keyaccess.JWT `json:"credentialManifestJwt"`
+}
+
+type PresentationDefinitionRef struct {
+	// id of the presentation definition created with the PresentationDefinitions API. Must be empty if `value` is present.
+	ID *string `json:"presentationDefinitionId"`
+
+	// value of the presentation definition to use. Must be empty if `id` is present.
+	PresentationDefinition *exchange.PresentationDefinition `json:"presentationDefinition" validate:"omitempty,dive"`
 }

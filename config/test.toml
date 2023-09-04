@@ -1,8 +1,3 @@
-title = "SSI Service Config"
-
-svn = "0.0.1"
-desc = "Configuration to be used while running the service for testing with docker compose."
-
 # http service configuration
 [server]
 env = "test" # either 'dev', 'test' or 'prod'
@@ -12,9 +7,10 @@ api_host = "0.0.0.0:3000"
 jager_host = "http://jaeger:14268/api/traces"
 jager_enabled = true
 
+# 10 seconds, time is in nanoseconds
+read_timeout = 10000000000
+write_timeout = 10000000000
 # 5 seconds, time is in nanoseconds
-read_timeout = 5000000000
-write_timeout = 5000000000
 shutdown_timeout = 5000000000
 
 log_location = "log"
@@ -23,6 +19,11 @@ log_level = "warn"
 
 enable_schema_caching = true
 enable_allow_all_cors = true
+
+[services.storage_encryption]
+# master_key_uri = "gcp-kms://projects/*/locations/*/keyRings/*/cryptoKeys/*"
+# kms_credentials_path = "credentials.json"
+disable_encryption = false
 
 # Storage Configuration
 [services]
@@ -37,37 +38,22 @@ option = "redis:6379"
 id = "storage-password-option"
 option = "password"
 
-# per-service configuration
 [services.keystore]
-name = "keystore"
-password = "default-password"
 # master_key_uri = "gcp-kms://projects/*/locations/*/keyRings/*/cryptoKeys/*"
 # kms_credentials_path = "credentials.json"
+disable_encryption = false
 
 [services.did]
-name = "did"
 methods = ["key", "web", "ion"]
-local_resolution_methods = ["key", "web", "pkh", "peer"]
+local_resolution_methods = ["ion", "key", "web", "pkh", "peer"]
 universal_resolver_url = "http://uni-resolver-web:8080"
 universal_resolver_methods = ["ion"]
 ion_resolver_url = "https://ion.tbddev.org"
-
-[services.schema]
-name = "schema"
+batch_create_max_items = 100
 
 [services.credential]
-name = "credential"
-
-[services.issuance]
-name = "issuance"
-
-[services.manifest]
-name = "manifest"
-
-[services.presentation]
-name = "presentation"
-expiration_duration = "30m"
+batch_create_max_items = 100
+batch_update_status_max_items = 100
 
 [services.webhook]
-name = "webhook"
 webhook_timeout = "10s"

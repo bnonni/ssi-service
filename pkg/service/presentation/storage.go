@@ -9,9 +9,8 @@ import (
 	"github.com/goccy/go-json"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
-	"go.einride.tech/aip/filtering"
-
 	"github.com/tbd54566975/ssi-service/pkg/service/common"
+	"go.einride.tech/aip/filtering"
 
 	opstorage "github.com/tbd54566975/ssi-service/pkg/service/operation/storage"
 	"github.com/tbd54566975/ssi-service/pkg/service/operation/storage/namespace"
@@ -22,12 +21,10 @@ import (
 
 const (
 	presentationDefinitionNamespace = "presentation_definition"
-	presentationRequestNamespace    = "presentation_request"
 )
 
 type Storage struct {
 	db storage.ServiceStorage
-	common.RequestStorage
 }
 
 func (ps *Storage) UpdateSubmission(ctx context.Context, id string, approved bool, reason string, opID string) (prestorage.StoredSubmission, opstorage.StoredOperation, error) {
@@ -38,8 +35,9 @@ func (ps *Storage) UpdateSubmission(ctx context.Context, id string, approved boo
 	if approved {
 		m["status"] = opsubmission.StatusApproved
 	}
-	submissionData, operationData, err := ps.db.UpdateValueAndOperation(
+	submissionData, operationData, err := storage.UpdateValueAndOperation(
 		ctx,
+		ps.db,
 		opsubmission.Namespace,
 		id,
 		storage.NewUpdater(m),
@@ -65,10 +63,11 @@ func (ps *Storage) UpdateSubmission(ctx context.Context, id string, approved boo
 	return s, op, nil
 }
 
-func (ps *Storage) ListSubmissions(ctx context.Context, filter filtering.Filter) ([]prestorage.StoredSubmission, error) {
-	allData, err := ps.db.ReadAll(ctx, opsubmission.Namespace)
+func (ps *Storage) ListSubmissions(ctx context.Context, filter filtering.Filter, page common.Page) (*prestorage.StoredSubmissions, error) {
+	token, size := page.ToStorageArgs()
+	allData, nextPageToken, err := ps.db.ReadPage(ctx, opsubmission.Namespace, token, size)
 	if err != nil {
-		return nil, errors.Wrap(err, "reading all data")
+		return nil, errors.Wrap(err, "reading page")
 	}
 
 	shouldInclude, err := storage.NewIncludeFunc(filter)
@@ -91,14 +90,17 @@ func (ps *Storage) ListSubmissions(ctx context.Context, filter filtering.Filter)
 			storedSubmissions = append(storedSubmissions, ss)
 		}
 	}
-	return storedSubmissions, nil
+	return &prestorage.StoredSubmissions{
+		Submissions:   storedSubmissions,
+		NextPageToken: nextPageToken,
+	}, nil
 }
 
 func NewPresentationStorage(db storage.ServiceStorage) (prestorage.Storage, error) {
 	if db == nil {
 		return nil, errors.New("db reference is nil")
 	}
-	return &Storage{db: db, RequestStorage: common.NewRequestStorage(db, presentationRequestNamespace)}, nil
+	return &Storage{db: db}, nil
 }
 
 func (ps *Storage) StoreDefinition(ctx context.Context, presentation prestorage.StoredDefinition) error {

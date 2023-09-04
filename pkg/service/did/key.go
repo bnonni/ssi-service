@@ -10,7 +10,7 @@ import (
 	"github.com/mr-tron/base58"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
-
+	"github.com/tbd54566975/ssi-service/pkg/service/common"
 	"github.com/tbd54566975/ssi-service/pkg/service/keystore"
 )
 
@@ -29,6 +29,8 @@ type keyHandler struct {
 	storage  *Storage
 	keyStore *keystore.Service
 }
+
+var _ MethodHandler = (*keyHandler)(nil)
 
 func (h *keyHandler) GetMethod() did.Method {
 	return h.method
@@ -95,20 +97,21 @@ func (h *keyHandler) GetDID(ctx context.Context, request GetDIDRequest) (*GetDID
 	return &GetDIDResponse{DID: gotDID.DID}, nil
 }
 
-func (h *keyHandler) ListDIDs(ctx context.Context) (*ListDIDsResponse, error) {
-	logrus.Debug("getting did:key DIDs")
-
-	gotDIDs, err := h.storage.ListDIDsDefault(ctx, did.KeyMethod.String())
+func (h *keyHandler) ListDIDs(ctx context.Context, page *common.Page) (*ListDIDsResponse, error) {
+	gotDIDs, err := h.storage.ListDIDsPage(ctx, did.KeyMethod.String(), page, new(DefaultStoredDID))
 	if err != nil {
-		return nil, fmt.Errorf("error getting did:key DIDs")
+		return nil, errors.Wrap(err, "listing did:web DIDs page")
 	}
-	dids := make([]did.Document, 0, len(gotDIDs))
-	for _, gotDID := range gotDIDs {
+	dids := make([]did.Document, 0, len(gotDIDs.DIDs))
+	for _, gotDID := range gotDIDs.DIDs {
 		if !gotDID.IsSoftDeleted() {
 			dids = append(dids, gotDID.GetDocument())
 		}
 	}
-	return &ListDIDsResponse{DIDs: dids}, nil
+	return &ListDIDsResponse{
+		DIDs:          dids,
+		NextPageToken: gotDIDs.NextPageToken,
+	}, nil
 }
 
 // ListDeletedDIDs returns only DIDs we have in storage for Key with SoftDeleted flag set to true

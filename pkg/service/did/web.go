@@ -11,7 +11,7 @@ import (
 	"github.com/mr-tron/base58"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
-
+	"github.com/tbd54566975/ssi-service/pkg/service/common"
 	"github.com/tbd54566975/ssi-service/pkg/service/keystore"
 )
 
@@ -31,6 +31,8 @@ type webHandler struct {
 	keyStore *keystore.Service
 }
 
+var _ MethodHandler = (*webHandler)(nil)
+
 type CreateWebDIDOptions struct {
 	// e.g. did:web:example.com
 	DIDWebID string `json:"didWebId" validate:"required"`
@@ -47,6 +49,9 @@ func (h *webHandler) GetMethod() did.Method {
 func (h *webHandler) CreateDID(ctx context.Context, request CreateDIDRequest) (*CreateDIDResponse, error) {
 	logrus.Debugf("creating DID: %+v", request)
 
+	if !crypto.IsSupportedKeyType(request.KeyType) {
+		return nil, errors.Errorf("key type <%s> not supported", request.KeyType)
+	}
 	// process options
 	if request.Options == nil {
 		return nil, errors.New("options cannot be empty")
@@ -61,8 +66,18 @@ func (h *webHandler) CreateDID(ctx context.Context, request CreateDIDRequest) (*
 
 	didWeb := web.DIDWeb(opts.DIDWebID)
 
-	if !didWeb.IsValid() {
-		return nil, fmt.Errorf("could not resolve did:web DID: %s", didWeb)
+	err := didWeb.Validate(ctx)
+	if err == nil {
+		return nil, fmt.Errorf("%s exists externally", didWeb.String())
+	}
+
+	exists, err := h.storage.DIDExists(ctx, opts.DIDWebID)
+	if err != nil {
+		return nil, errors.Wrapf(err, "error getting DID: %s", opts.DIDWebID)
+	}
+
+	if exists {
+		return nil, fmt.Errorf("did with id<%s> already exists", opts.DIDWebID)
 	}
 
 	pubKey, privKey, err := crypto.GenerateKeyByKeyType(request.KeyType)
@@ -126,20 +141,21 @@ func (h *webHandler) GetDID(ctx context.Context, request GetDIDRequest) (*GetDID
 	return &GetDIDResponse{DID: gotDID.GetDocument()}, nil
 }
 
-func (h *webHandler) ListDIDs(ctx context.Context) (*ListDIDsResponse, error) {
-	logrus.Debug("listing did:web DID")
-
-	gotDIDs, err := h.storage.ListDIDsDefault(ctx, did.WebMethod.String())
+func (h *webHandler) ListDIDs(ctx context.Context, page *common.Page) (*ListDIDsResponse, error) {
+	gotDIDs, err := h.storage.ListDIDsPage(ctx, did.WebMethod.String(), page, new(DefaultStoredDID))
 	if err != nil {
-		return nil, errors.Wrap(err, "listing did:web DIDs")
+		return nil, errors.Wrap(err, "listing did:web DIDs page")
 	}
-	dids := make([]did.Document, 0, len(gotDIDs))
-	for _, gotDID := range gotDIDs {
+	dids := make([]did.Document, 0, len(gotDIDs.DIDs))
+	for _, gotDID := range gotDIDs.DIDs {
 		if !gotDID.IsSoftDeleted() {
 			dids = append(dids, gotDID.GetDocument())
 		}
 	}
-	return &ListDIDsResponse{DIDs: dids}, nil
+	return &ListDIDsResponse{
+		DIDs:          dids,
+		NextPageToken: gotDIDs.NextPageToken,
+	}, nil
 }
 
 func (h *webHandler) ListDeletedDIDs(ctx context.Context) (*ListDIDsResponse, error) {

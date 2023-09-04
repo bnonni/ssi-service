@@ -2,11 +2,15 @@ package router
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/TBD54566975/ssi-sdk/crypto"
 	didsdk "github.com/TBD54566975/ssi-sdk/did"
 	"github.com/stretchr/testify/assert"
+	"github.com/tbd54566975/ssi-service/pkg/service/common"
+	"github.com/tbd54566975/ssi-service/pkg/testutil"
+	"gopkg.in/h2non/gock.v1"
 
 	"github.com/tbd54566975/ssi-service/config"
 	"github.com/tbd54566975/ssi-service/pkg/service/did"
@@ -28,177 +32,240 @@ func TestDIDRouter(t *testing.T) {
 		assert.Contains(tt, err.Error(), "could not create DID router with service type: test")
 	})
 
-	t.Run("DID Service Test", func(tt *testing.T) {
+	for _, test := range testutil.TestDatabases {
+		t.Run(test.Name, func(t *testing.T) {
+			// TODO: Fix pagesize issue on redis - https://github.com/TBD54566975/ssi-service/issues/538
+			if !strings.Contains(test.Name, "Redis") {
+				t.Run("List DIDs supports paging", func(tt *testing.T) {
+					db := test.ServiceStorage(tt)
+					assert.NotEmpty(tt, db)
+					keyStoreService := testKeyStoreService(tt, db)
+					methods := []string{didsdk.KeyMethod.String()}
+					serviceConfig := config.DIDServiceConfig{Methods: methods, LocalResolutionMethods: methods}
+					didService, err := did.NewDIDService(serviceConfig, db, keyStoreService, nil)
+					assert.NoError(tt, err)
+					assert.NotEmpty(tt, didService)
+					createDID(tt, didService)
+					createDID(tt, didService)
 
-		db := setupTestDB(tt)
-		assert.NotEmpty(tt, db)
+					one := 1
+					listDIDsResponse1, err := didService.ListDIDsByMethod(context.Background(),
+						did.ListDIDsRequest{
+							Method: didsdk.KeyMethod,
+							PageRequest: &common.Page{
+								Size: one,
+							},
+						})
 
-		keyStoreService := testKeyStoreService(tt, db)
-		methods := []string{didsdk.KeyMethod.String()}
-		serviceConfig := config.DIDServiceConfig{Methods: methods, LocalResolutionMethods: methods}
-		didService, err := did.NewDIDService(serviceConfig, db, keyStoreService)
-		assert.NoError(tt, err)
-		assert.NotEmpty(tt, didService)
+					assert.NoError(tt, err)
+					assert.Len(tt, listDIDsResponse1.DIDs, 1)
+					assert.NotEmpty(tt, listDIDsResponse1.NextPageToken)
 
-		// check type and status
-		assert.Equal(tt, framework.DID, didService.Type())
-		assert.Equal(tt, framework.StatusReady, didService.Status().Status)
+					listDIDsResponse2, err := didService.ListDIDsByMethod(context.Background(),
+						did.ListDIDsRequest{
+							Method: didsdk.KeyMethod,
+							PageRequest: &common.Page{
+								Size:  one,
+								Token: listDIDsResponse1.NextPageToken,
+							},
+						})
 
-		// get unknown handler
-		_, err = didService.GetDIDByMethod(context.Background(), did.GetDIDRequest{Method: "bad"})
-		assert.Error(tt, err)
-		assert.Contains(tt, err.Error(), "could not get handler for method<bad>")
+					assert.NoError(tt, err)
+					assert.Len(tt, listDIDsResponse2.DIDs, 1)
+					assert.Empty(tt, listDIDsResponse2.NextPageToken)
 
-		supported := didService.GetSupportedMethods()
-		assert.NotEmpty(tt, supported)
-		assert.Len(tt, supported.Methods, 1)
-		assert.Equal(tt, didsdk.KeyMethod, supported.Methods[0])
-
-		// bad key type
-		_, err = didService.CreateDIDByMethod(context.Background(), did.CreateDIDRequest{Method: didsdk.KeyMethod, KeyType: "bad"})
-		assert.Error(tt, err)
-		assert.Contains(tt, err.Error(), "could not create did:key")
-
-		// good key type
-		createDIDResponse, err := didService.CreateDIDByMethod(context.Background(), did.CreateDIDRequest{Method: didsdk.KeyMethod, KeyType: crypto.Ed25519})
-		assert.NoError(tt, err)
-		assert.NotEmpty(tt, createDIDResponse)
-
-		// check the DID is a did:key
-		assert.Contains(tt, createDIDResponse.DID.ID, "did:key")
-
-		// get it back
-		getDIDResponse, err := didService.GetDIDByMethod(context.Background(), did.GetDIDRequest{Method: didsdk.KeyMethod, ID: createDIDResponse.DID.ID})
-		assert.NoError(tt, err)
-		assert.NotEmpty(tt, getDIDResponse)
-
-		// make sure it's the same value
-		assert.Equal(tt, createDIDResponse.DID.ID, getDIDResponse.DID.ID)
-
-		// create a second DID
-		createDIDResponse2, err := didService.CreateDIDByMethod(context.Background(), did.CreateDIDRequest{Method: didsdk.KeyMethod, KeyType: crypto.Ed25519})
-		assert.NoError(tt, err)
-		assert.NotEmpty(tt, createDIDResponse2)
-
-		// get all DIDs back
-		getDIDsResponse, err := didService.ListDIDsByMethod(context.Background(), did.ListDIDsRequest{Method: didsdk.KeyMethod})
-		assert.NoError(tt, err)
-		assert.NotEmpty(tt, getDIDsResponse)
-		assert.Len(tt, getDIDsResponse.DIDs, 2)
-
-		knownDIDs := map[string]bool{createDIDResponse.DID.ID: true, createDIDResponse2.DID.ID: true}
-		for _, gotDID := range getDIDsResponse.DIDs {
-			if _, ok := knownDIDs[gotDID.ID]; !ok {
-				tt.Error("got unknown DID")
-			} else {
-				delete(knownDIDs, gotDID.ID)
+				})
 			}
-		}
-		assert.Len(tt, knownDIDs, 0)
 
-		// delete dids
-		err = didService.SoftDeleteDIDByMethod(context.Background(), did.DeleteDIDRequest{Method: didsdk.KeyMethod, ID: createDIDResponse.DID.ID})
-		assert.NoError(tt, err)
+			t.Run("DID Service Test", func(tt *testing.T) {
+				db := test.ServiceStorage(tt)
+				assert.NotEmpty(tt, db)
 
-		err = didService.SoftDeleteDIDByMethod(context.Background(), did.DeleteDIDRequest{Method: didsdk.KeyMethod, ID: createDIDResponse2.DID.ID})
-		assert.NoError(tt, err)
+				keyStoreService := testKeyStoreService(tt, db)
+				methods := []string{didsdk.KeyMethod.String()}
+				serviceConfig := config.DIDServiceConfig{Methods: methods, LocalResolutionMethods: methods}
+				didService, err := did.NewDIDService(serviceConfig, db, keyStoreService, nil)
+				assert.NoError(tt, err)
+				assert.NotEmpty(tt, didService)
 
-		// get all DIDs back
-		getDIDsResponse, err = didService.ListDIDsByMethod(context.Background(), did.ListDIDsRequest{Method: didsdk.KeyMethod})
-		assert.NoError(tt, err)
-		assert.NotEmpty(tt, getDIDsResponse)
-		assert.Len(tt, getDIDsResponse.DIDs, 0)
+				// check type and status
+				assert.Equal(tt, framework.DID, didService.Type())
+				assert.Equal(tt, framework.StatusReady, didService.Status().Status)
 
-		// get deleted DIDs back
-		getDIDsResponse, err = didService.ListDIDsByMethod(context.Background(), did.ListDIDsRequest{Method: didsdk.KeyMethod, Deleted: true})
-		assert.NoError(tt, err)
-		assert.NotEmpty(tt, getDIDsResponse)
-		assert.Len(tt, getDIDsResponse.DIDs, 2)
-	})
+				// get unknown handler
+				_, err = didService.GetDIDByMethod(context.Background(), did.GetDIDRequest{Method: "bad"})
+				assert.Error(tt, err)
+				assert.Contains(tt, err.Error(), "could not get handler for method<bad>")
 
-	t.Run("DID Web Service Test", func(tt *testing.T) {
+				supported := didService.GetSupportedMethods()
+				assert.NotEmpty(tt, supported)
+				assert.Len(tt, supported.Methods, 1)
+				assert.Equal(tt, didsdk.KeyMethod, supported.Methods[0])
 
-		db := setupTestDB(tt)
-		assert.NotEmpty(tt, db)
+				// bad key type
+				_, err = didService.CreateDIDByMethod(context.Background(), did.CreateDIDRequest{Method: didsdk.KeyMethod, KeyType: "bad"})
+				assert.Error(tt, err)
+				assert.Contains(tt, err.Error(), "could not create did:key")
 
-		keyStoreService := testKeyStoreService(tt, db)
-		methods := []string{didsdk.KeyMethod.String(), didsdk.WebMethod.String()}
-		serviceConfig := config.DIDServiceConfig{Methods: methods, LocalResolutionMethods: methods}
-		didService, err := did.NewDIDService(serviceConfig, db, keyStoreService)
-		assert.NoError(tt, err)
-		assert.NotEmpty(tt, didService)
+				// good key type
+				createDIDResponse, err := didService.CreateDIDByMethod(context.Background(), did.CreateDIDRequest{Method: didsdk.KeyMethod, KeyType: crypto.Ed25519})
+				assert.NoError(tt, err)
+				assert.NotEmpty(tt, createDIDResponse)
 
-		// check type and status
-		assert.Equal(tt, framework.DID, didService.Type())
-		assert.Equal(tt, framework.StatusReady, didService.Status().Status)
+				// check the DID is a did:key
+				assert.Contains(tt, createDIDResponse.DID.ID, "did:key")
 
-		// get unknown handler
-		_, err = didService.GetDIDByMethod(context.Background(), did.GetDIDRequest{Method: "bad"})
-		assert.Error(tt, err)
-		assert.Contains(tt, err.Error(), "could not get handler for method<bad>")
+				// get it back
+				getDIDResponse, err := didService.GetDIDByMethod(context.Background(), did.GetDIDRequest{Method: didsdk.KeyMethod, ID: createDIDResponse.DID.ID})
+				assert.NoError(tt, err)
+				assert.NotEmpty(tt, getDIDResponse)
 
-		supported := didService.GetSupportedMethods()
-		assert.NotEmpty(tt, supported)
-		assert.Len(tt, supported.Methods, 2)
+				// make sure it's the same value
+				assert.Equal(tt, createDIDResponse.DID.ID, getDIDResponse.DID.ID)
 
-		assert.ElementsMatch(tt, supported.Methods, []didsdk.Method{didsdk.KeyMethod, didsdk.WebMethod})
+				// create a second DID
+				createDIDResponse2, err := didService.CreateDIDByMethod(context.Background(), did.CreateDIDRequest{Method: didsdk.KeyMethod, KeyType: crypto.Ed25519})
+				assert.NoError(tt, err)
+				assert.NotEmpty(tt, createDIDResponse2)
 
-		// bad key type
-		createOpts := did.CreateWebDIDOptions{DIDWebID: "did:web:example.com"}
-		_, err = didService.CreateDIDByMethod(context.Background(), did.CreateDIDRequest{Method: didsdk.WebMethod, KeyType: "bad", Options: createOpts})
-		assert.Error(tt, err)
-		assert.Contains(tt, err.Error(), "could not generate key for did:web")
+				// get all DIDs back
+				getDIDsResponse, err := didService.ListDIDsByMethod(context.Background(), did.ListDIDsRequest{Method: didsdk.KeyMethod})
+				assert.NoError(tt, err)
+				assert.NotEmpty(tt, getDIDsResponse)
+				assert.Len(tt, getDIDsResponse.DIDs, 2)
 
-		// good key type
-		createDIDResponse, err := didService.CreateDIDByMethod(context.Background(), did.CreateDIDRequest{Method: didsdk.WebMethod, KeyType: crypto.Ed25519, Options: createOpts})
-		assert.NoError(tt, err)
-		assert.NotEmpty(tt, createDIDResponse)
+				knownDIDs := map[string]bool{createDIDResponse.DID.ID: true, createDIDResponse2.DID.ID: true}
+				for _, gotDID := range getDIDsResponse.DIDs {
+					if _, ok := knownDIDs[gotDID.ID]; !ok {
+						tt.Error("got unknown DID")
+					} else {
+						delete(knownDIDs, gotDID.ID)
+					}
+				}
+				assert.Len(tt, knownDIDs, 0)
 
-		// check the DID is a did:key
-		assert.Contains(tt, createDIDResponse.DID.ID, "did:web")
+				// delete dids
+				err = didService.SoftDeleteDIDByMethod(context.Background(), did.DeleteDIDRequest{Method: didsdk.KeyMethod, ID: createDIDResponse.DID.ID})
+				assert.NoError(tt, err)
 
-		// get it back
-		getDIDResponse, err := didService.GetDIDByMethod(context.Background(), did.GetDIDRequest{Method: didsdk.WebMethod, ID: createDIDResponse.DID.ID})
-		assert.NoError(tt, err)
-		assert.NotEmpty(tt, getDIDResponse)
+				err = didService.SoftDeleteDIDByMethod(context.Background(), did.DeleteDIDRequest{Method: didsdk.KeyMethod, ID: createDIDResponse2.DID.ID})
+				assert.NoError(tt, err)
 
-		// make sure it's the same value
-		assert.Equal(tt, createDIDResponse.DID.ID, getDIDResponse.DID.ID)
+				// get all DIDs back
+				getDIDsResponse, err = didService.ListDIDsByMethod(context.Background(), did.ListDIDsRequest{Method: didsdk.KeyMethod})
+				assert.NoError(tt, err)
+				assert.NotEmpty(tt, getDIDsResponse)
+				assert.Len(tt, getDIDsResponse.DIDs, 0)
 
-		// create a second DID
-		createOpts = did.CreateWebDIDOptions{DIDWebID: "did:web:tbd.website"}
-		createDIDResponse2, err := didService.CreateDIDByMethod(context.Background(), did.CreateDIDRequest{Method: didsdk.WebMethod, KeyType: crypto.Ed25519, Options: createOpts})
-		assert.NoError(tt, err)
-		assert.NotEmpty(tt, createDIDResponse2)
+				// get deleted DIDs back
+				getDIDsResponse, err = didService.ListDIDsByMethod(context.Background(), did.ListDIDsRequest{Method: didsdk.KeyMethod, Deleted: true})
+				assert.NoError(tt, err)
+				assert.NotEmpty(tt, getDIDsResponse)
+				assert.Len(tt, getDIDsResponse.DIDs, 2)
+			})
 
-		// get all DIDs back
-		getDIDsResponse, err := didService.ListDIDsByMethod(context.Background(), did.ListDIDsRequest{Method: didsdk.WebMethod})
-		assert.NoError(tt, err)
-		assert.NotEmpty(tt, getDIDsResponse)
-		assert.Len(tt, getDIDsResponse.DIDs, 2)
+			t.Run("DID Web Service Test", func(tt *testing.T) {
+				db := test.ServiceStorage(tt)
+				assert.NotEmpty(tt, db)
 
-		knownDIDs := map[string]bool{createDIDResponse.DID.ID: true, createDIDResponse2.DID.ID: true}
-		for _, gotDID := range getDIDsResponse.DIDs {
-			if _, ok := knownDIDs[gotDID.ID]; !ok {
-				tt.Error("got unknown DID")
-			} else {
-				delete(knownDIDs, gotDID.ID)
-			}
-		}
-		assert.Len(tt, knownDIDs, 0)
+				keyStoreService := testKeyStoreService(tt, db)
+				methods := []string{didsdk.KeyMethod.String(), didsdk.WebMethod.String()}
+				serviceConfig := config.DIDServiceConfig{Methods: methods, LocalResolutionMethods: methods}
+				didService, err := did.NewDIDService(serviceConfig, db, keyStoreService, nil)
+				assert.NoError(tt, err)
+				assert.NotEmpty(tt, didService)
 
-		// delete dids
-		err = didService.SoftDeleteDIDByMethod(context.Background(), did.DeleteDIDRequest{Method: didsdk.WebMethod, ID: createDIDResponse.DID.ID})
-		assert.NoError(tt, err)
+				// check type and status
+				assert.Equal(tt, framework.DID, didService.Type())
+				assert.Equal(tt, framework.StatusReady, didService.Status().Status)
 
-		err = didService.SoftDeleteDIDByMethod(context.Background(), did.DeleteDIDRequest{Method: didsdk.WebMethod, ID: createDIDResponse2.DID.ID})
-		assert.NoError(tt, err)
+				// get unknown handler
+				_, err = didService.GetDIDByMethod(context.Background(), did.GetDIDRequest{Method: "bad"})
+				assert.Error(tt, err)
+				assert.Contains(tt, err.Error(), "could not get handler for method<bad>")
 
-		// get all DIDs back
-		getDIDsResponse, err = didService.ListDIDsByMethod(context.Background(), did.ListDIDsRequest{Method: didsdk.WebMethod})
-		assert.NoError(tt, err)
-		assert.NotEmpty(tt, getDIDsResponse)
-		assert.Len(tt, getDIDsResponse.DIDs, 0)
-	})
+				supported := didService.GetSupportedMethods()
+				assert.NotEmpty(tt, supported)
+				assert.Len(tt, supported.Methods, 2)
 
+				assert.ElementsMatch(tt, supported.Methods, []didsdk.Method{didsdk.KeyMethod, didsdk.WebMethod})
+
+				gock.Off()
+				gock.New("https://example.com").
+					Get("/.well-known/did.json").
+					Reply(200).
+					BodyString("")
+				// bad key type
+				createOpts := did.CreateWebDIDOptions{DIDWebID: "did:web:example.com"}
+				_, err = didService.CreateDIDByMethod(context.Background(), did.CreateDIDRequest{Method: didsdk.WebMethod, KeyType: "bad", Options: createOpts})
+				assert.Error(tt, err)
+				assert.Contains(tt, err.Error(), "key type <bad> not supported")
+
+				gock.Off()
+				gock.New("https://example.com").
+					Get("/.well-known/did.json").
+					Reply(404)
+				// good key type
+				createDIDResponse, err := didService.CreateDIDByMethod(context.Background(), did.CreateDIDRequest{Method: didsdk.WebMethod, KeyType: crypto.Ed25519, Options: createOpts})
+				assert.NoError(tt, err)
+				assert.NotEmpty(tt, createDIDResponse)
+
+				// check the DID is a did:key
+				assert.Contains(tt, createDIDResponse.DID.ID, "did:web")
+
+				// get it back
+				getDIDResponse, err := didService.GetDIDByMethod(context.Background(), did.GetDIDRequest{Method: didsdk.WebMethod, ID: createDIDResponse.DID.ID})
+				assert.NoError(tt, err)
+				assert.NotEmpty(tt, getDIDResponse)
+
+				// make sure it's the same value
+				assert.Equal(tt, createDIDResponse.DID.ID, getDIDResponse.DID.ID)
+
+				gock.Off()
+				gock.New("https://tbd.website").
+					Get("/.well-known/did.json").
+					Reply(404)
+				// create a second DID
+				createOpts = did.CreateWebDIDOptions{DIDWebID: "did:web:tbd.website"}
+				createDIDResponse2, err := didService.CreateDIDByMethod(context.Background(), did.CreateDIDRequest{Method: didsdk.WebMethod, KeyType: crypto.Ed25519, Options: createOpts})
+				assert.NoError(tt, err)
+				assert.NotEmpty(tt, createDIDResponse2)
+
+				// get all DIDs back
+				getDIDsResponse, err := didService.ListDIDsByMethod(context.Background(), did.ListDIDsRequest{Method: didsdk.WebMethod})
+				assert.NoError(tt, err)
+				assert.NotEmpty(tt, getDIDsResponse)
+				assert.Len(tt, getDIDsResponse.DIDs, 2)
+
+				knownDIDs := map[string]bool{createDIDResponse.DID.ID: true, createDIDResponse2.DID.ID: true}
+				for _, gotDID := range getDIDsResponse.DIDs {
+					if _, ok := knownDIDs[gotDID.ID]; !ok {
+						tt.Error("got unknown DID")
+					} else {
+						delete(knownDIDs, gotDID.ID)
+					}
+				}
+				assert.Len(tt, knownDIDs, 0)
+
+				// delete dids
+				err = didService.SoftDeleteDIDByMethod(context.Background(), did.DeleteDIDRequest{Method: didsdk.WebMethod, ID: createDIDResponse.DID.ID})
+				assert.NoError(tt, err)
+
+				err = didService.SoftDeleteDIDByMethod(context.Background(), did.DeleteDIDRequest{Method: didsdk.WebMethod, ID: createDIDResponse2.DID.ID})
+				assert.NoError(tt, err)
+
+				// get all DIDs back
+				getDIDsResponse, err = didService.ListDIDsByMethod(context.Background(), did.ListDIDsRequest{Method: didsdk.WebMethod})
+				assert.NoError(tt, err)
+				assert.NotEmpty(tt, getDIDsResponse)
+				assert.Len(tt, getDIDsResponse.DIDs, 0)
+			})
+		})
+	}
+}
+
+func createDID(tt *testing.T, didService *did.Service) {
+	createDIDResponse, err := didService.CreateDIDByMethod(context.Background(), did.CreateDIDRequest{Method: didsdk.KeyMethod, KeyType: crypto.Ed25519})
+	assert.NoError(tt, err)
+	assert.NotEmpty(tt, createDIDResponse)
 }

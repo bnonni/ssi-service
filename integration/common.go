@@ -7,10 +7,13 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"text/template"
 	"time"
 
 	manifestsdk "github.com/TBD54566975/ssi-sdk/credential/manifest"
+	"github.com/TBD54566975/ssi-sdk/crypto"
+	"github.com/TBD54566975/ssi-sdk/did/key"
 	"github.com/cenkalti/backoff/v4"
 	"github.com/goccy/go-json"
 	"github.com/oliveagle/jsonpath"
@@ -44,9 +47,37 @@ func init() {
 	})
 }
 
+type didConfigurationResourceParams struct {
+	IssuerDID            string
+	VerificationMethodID string
+}
+
+func CreateDIDConfigurationResource(params didConfigurationResourceParams) (string, error) {
+	logrus.Println("\n\nCreate did configuration resource")
+	didConfiguration, err := resolveTemplate(params, "did-configuration-input.json")
+	if err != nil {
+		return "", err
+	}
+	output, err := put(endpoint+version+"did-configurations", didConfiguration)
+	if err != nil {
+		return "", errors.Wrapf(err, "did configuration endpoint with output: %s", output)
+	}
+
+	return output, nil
+}
+
 func CreateDIDKey() (string, error) {
 	logrus.Println("\n\nCreate a did for the issuer:")
 	output, err := put(endpoint+version+"dids/key", getJSONFromFile("did-input.json"))
+	if err != nil {
+		return "", errors.Wrapf(err, "did endpoint with output: %s", output)
+	}
+
+	return output, nil
+}
+
+func BatchCreateDIDKeys() (string, error) {
+	output, err := put(endpoint+version+"dids/key/batch", getJSONFromFile("batch-create-did-key-input.json"))
 	if err != nil {
 		return "", errors.Wrapf(err, "did endpoint with output: %s", output)
 	}
@@ -86,6 +117,27 @@ func CreateDIDION() (string, error) {
 	return output, nil
 }
 
+func UpdateDIDION(id string) (string, error) {
+	output, err := put(endpoint+version+"dids/ion/"+id, getJSONFromFile("update-did-ion-input.json"))
+	if err != nil {
+		return "", errors.Wrapf(err, "did endpoint with output: %s", output)
+	}
+
+	return output, nil
+}
+
+func ListWebDIDs() (string, error) {
+	urlValues := url.Values{
+		"pageSize": []string{"10"},
+	}
+	output, err := get(endpoint + version + "dids/web?" + urlValues.Encode())
+	if err != nil {
+		return "", errors.Wrapf(err, "list web did")
+	}
+
+	return output, nil
+}
+
 func ResolveDID(did string) (string, error) {
 	logrus.Println("\n\nResolve a did")
 	output, err := get(endpoint + version + "dids/resolver/" + did)
@@ -107,12 +159,12 @@ func CreateKYCSchema() (string, error) {
 }
 
 type credInputParams struct {
-	IssuerID    string
-	IssuerKID   string
-	SchemaID    string
-	SubjectID   string
-	Revocable   bool
-	Suspendable bool
+	IssuerID             string
+	VerificationMethodID string
+	SchemaID             string
+	SubjectID            string
+	Revocable            bool
+	Suspendable          bool
 }
 
 func CreateVerifiableCredential(credentialInput credInputParams) (string, error) {
@@ -156,6 +208,96 @@ func CreateVerifiableCredential(credentialInput credInputParams) (string, error)
 	return output, nil
 }
 
+type batchCredInputParams struct {
+	IssuerID             string
+	VerificationMethodID string
+	SchemaID             string
+	SubjectID0           string
+	Revocable0           bool
+	Suspendable0         bool
+	SubjectID1           string
+	Revocable1           bool
+	Suspendable1         bool
+}
+
+func BatchCreateVerifiableCredentials(credentialInput batchCredInputParams) (string, error) {
+	logrus.Println("\n\nCreate a verifiable credential")
+
+	credentialJSON, err := resolveTemplate(credentialInput, "batch-create-credential-input.json")
+	if err != nil {
+		return "", err
+	}
+
+	output, err := put(endpoint+version+"credentials/batch", credentialJSON)
+	if err != nil {
+		return "", errors.Wrap(err, "error writing batch credentials")
+	}
+
+	return output, nil
+}
+
+type batchUpdateStatusInputParams struct {
+	CredentialID0 string
+	Suspended0    bool
+	CredentialID1 string
+	Revoked1      bool
+}
+
+func BatchUpdateVerifiableCredentialStatuses(updateStatusInput batchUpdateStatusInputParams) (string, error) {
+	logrus.Println("\n\nCreate a verifiable credential")
+
+	updateStatusesJSON, err := resolveTemplate(updateStatusInput, "batch-update-credential-statuses-input.json")
+	if err != nil {
+		return "", err
+	}
+
+	output, err := put(endpoint+version+"credentials/status/batch", updateStatusesJSON)
+	if err != nil {
+		return "", errors.Wrap(err, "error writing batch update status")
+	}
+
+	return output, nil
+}
+
+func BatchCreate100VerifiableCredentials(credentialInput credInputParams) (string, error) {
+	logrus.Println("\n\nCreate a verifiable credential")
+
+	creds := make([]any, 0)
+	for i := 0; i < 100; i++ {
+		credentialInput, err := resolveTemplate(credInputParams{
+			IssuerID:             credentialInput.IssuerID,
+			VerificationMethodID: credentialInput.VerificationMethodID,
+			SchemaID:             credentialInput.SchemaID,
+			SubjectID:            credentialInput.SubjectID,
+			Revocable:            true,
+			Suspendable:          false,
+		}, "credential-input.json")
+		if err != nil {
+			return "", err
+		}
+		var credJSON any
+		if err := json.Unmarshal([]byte(credentialInput), &credJSON); err != nil {
+			return "", err
+		}
+		creds = append(creds, credJSON)
+	}
+
+	batchCreate := map[string]any{
+		"requests": creds,
+	}
+	batchCreateData, err := json.Marshal(batchCreate)
+	if err != nil {
+		return "", err
+	}
+
+	output, err := put(endpoint+version+"credentials/batch", string(batchCreateData))
+	if err != nil {
+		return "", errors.Wrap(err, "error writing batch credentials")
+	}
+
+	return output, nil
+}
+
 func CreateSubmissionCredential(params credInputParams) (string, error) {
 	logrus.Println("\n\nCreate a submission credential")
 
@@ -187,9 +329,9 @@ func resolveTemplate(input any, fileName string) (string, error) {
 }
 
 type credManifestParams struct {
-	IssuerID  string
-	IssuerKID string
-	SchemaID  string
+	IssuerID             string
+	VerificationMethodID string
+	SchemaID             string
 }
 
 func CreateCredentialManifest(credManifest credManifestParams) (string, error) {
@@ -231,6 +373,26 @@ func CreateCredentialApplicationJWT(credApplication credApplicationParams, crede
 	}
 
 	return signed.String(), nil
+}
+
+type presentationRequestParams struct {
+	DefinitionID         string
+	IssuerID             string
+	VerificationMethodID string
+}
+
+func CreatePresentationRequest(params presentationRequestParams) (string, error) {
+	logrus.Println("\n\nCreate our Presentation Request:")
+	pRequestJSON, err := resolveTemplate(params, "presentation-request-input.json")
+	if err != nil {
+		return "", err
+	}
+	output, err := put(endpoint+version+"presentations/requests", pRequestJSON)
+	if err != nil {
+		return "", errors.Wrapf(err, "presentation request endpoint with output: %s", output)
+	}
+
+	return output, nil
 }
 
 type definitionParams struct {
@@ -312,6 +474,56 @@ func CreateSubmission(params submissionParams, holderPrivateKey gocrypto.Private
 	return output, nil
 }
 
+func CreateSubmissionWithExternalCredential(params submissionParams) (string, error) {
+	logrus.Println("\n\nCreate our Submission with external credential:")
+
+	holderPrivateKey, holderDIDKey, err := key.GenerateDIDKey(crypto.Ed25519)
+	if err != nil {
+		return "", errors.Wrapf(err, "generating did key")
+	}
+	holderDID, err := holderDIDKey.Expand()
+	if err != nil {
+		return "", errors.Wrapf(err, "problem expanding did")
+	}
+
+	holderKID := holderDID.VerificationMethod[0].ID
+
+	params.HolderID = holderDID.ID
+	submissionJSON, err := resolveTemplate(params, "presentation-submission-external-credential-input.json")
+	if err != nil {
+		return "", err
+	}
+
+	signer, err := keyaccess.NewJWKKeyAccess(holderDID.ID, holderKID, holderPrivateKey)
+	if err != nil {
+		return "", errors.Wrap(err, "creating signer")
+	}
+
+	var submission any
+	if err = json.Unmarshal([]byte(submissionJSON), &submission); err != nil {
+		return "", err
+	}
+
+	signed, err := signer.SignJSON(submission)
+	if err != nil {
+		logrus.Println("Failed signing: " + submissionJSON)
+		return "", errors.Wrap(err, "signing json")
+	}
+
+	submissionJSONWrapper, err := resolveTemplate(submissionJWTParams{SubmissionJWT: signed.String()},
+		"presentation-submission-input-jwt.json")
+	if err != nil {
+		return "", err
+	}
+
+	output, err := put(endpoint+version+"presentations/submissions", submissionJSONWrapper)
+	if err != nil {
+		return "", errors.Wrapf(err, "presentation submission endpoint with output: %s", output)
+	}
+
+	return output, nil
+}
+
 type applicationParams struct {
 	ApplicationJWT string
 }
@@ -361,6 +573,12 @@ func getJSONElement(jsonString string, jsonPath string) (string, error) {
 		elementStr = fmt.Sprintf("%v", element)
 	case string:
 		elementStr = fmt.Sprintf("%v", element)
+	case []any:
+		data, err := json.Marshal(element)
+		if err != nil {
+			return "", err
+		}
+		elementStr = compactJSONOutput(string(data))
 	case map[string]any:
 		data, err := json.Marshal(element)
 		if err != nil {
@@ -389,14 +607,14 @@ func get(url string) (string, error) {
 		return "", fmt.Errorf("status code not in the 200s. body: %s", string(body))
 	}
 
-	logrus.Infof("Received:  %s", string(body))
+	logrus.Infof("Received:  %s", prettyJSON(body))
 	return string(body), err
 }
 
-func put(url string, json string) (string, error) {
-	logrus.Printf("\nPerforming PUT request to:  %s \n\nwith data: \n%s\n", url, json)
+func put(url string, jsonData string) (string, error) {
+	logrus.Printf("\nPerforming PUT request to:  %s \n\nwith data: \n%s\n", url, jsonData)
 
-	req, err := http.NewRequest(http.MethodPut, url, bytes.NewBuffer([]byte(json)))
+	req, err := http.NewRequest(http.MethodPut, url, bytes.NewBuffer([]byte(jsonData)))
 	if err != nil {
 		return "", errors.Wrap(err, "building http req")
 	}
@@ -407,6 +625,7 @@ func put(url string, json string) (string, error) {
 	if err != nil {
 		return "", errors.Wrap(err, "client http client")
 	}
+	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -419,9 +638,18 @@ func put(url string, json string) (string, error) {
 	}
 
 	logrus.Println("\nOutput:")
-	logrus.Println(bodyStr)
+	indentedBodyStr := prettyJSON(body)
+	logrus.Println(indentedBodyStr)
 
 	return bodyStr, err
+}
+
+func prettyJSON(body []byte) string {
+	var d any
+	_ = json.Unmarshal(body, &d)
+	indentedBody, _ := json.MarshalIndent(d, "", "  ")
+	indentedBodyStr := string(indentedBody)
+	return indentedBodyStr
 }
 
 func getJSONFromFile(fileName string) string {
@@ -471,10 +699,10 @@ func ReviewApplication(params reviewApplicationParams) (string, error) {
 }
 
 type issuanceTemplateParams struct {
-	SchemaID   string
-	ManifestID string
-	IssuerID   string
-	IssuerKID  string
+	SchemaID             string
+	ManifestID           string
+	IssuerID             string
+	VerificationMethodID string
 }
 
 func CreateIssuanceTemplate(params issuanceTemplateParams) (string, error) {

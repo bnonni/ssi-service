@@ -1,13 +1,27 @@
 package credential
 
 import (
+	"fmt"
+
+	"github.com/TBD54566975/ssi-sdk/util"
 	"github.com/tbd54566975/ssi-service/internal/credential"
+	"github.com/tbd54566975/ssi-service/pkg/service/common"
 )
 
+type BatchCreateCredentialsRequest struct {
+	Requests []CreateCredentialRequest
+}
+
+type BatchCreateCredentialsResponse struct {
+	Credentials []credential.Container
+}
+
 type CreateCredentialRequest struct {
-	Issuer    string `json:"issuer" validate:"required"`
-	IssuerKID string `json:"issuerKid" validate:"required"`
-	Subject   string `json:"subject" validate:"required"`
+	Issuer string `json:"issuer" validate:"required"`
+	// Fully qualified verification method ID to determine the private key used for signing this credential. For example
+	// `did:ion:EiDpQBo_nEfuLVeppgmPVQNEhtrnZLWFsB9ziZUuaKCJ3Q#83526c36-136c-423b-a57a-f190b83ae531`.
+	FullyQualifiedVerificationMethodID string `json:"issuerVerificationMethodId" validate:"required"`
+	Subject                            string `json:"subject" validate:"required"`
 	// A context is optional. If not present, we'll apply default, required context values.
 	Context string `json:"context,omitempty"`
 	// A schema ID is optional. If present, we'll attempt to look it up and validate the data against it.
@@ -16,6 +30,7 @@ type CreateCredentialRequest struct {
 	Expiry      string         `json:"expiry,omitempty"`
 	Revocable   bool           `json:"revocable,omitempty"`
 	Suspendable bool           `json:"suspendable,omitempty"`
+	Evidence    []any          `json:"evidence,omitempty"`
 	// TODO(gabe) support more capabilities like signature type, format, evidence, and more.
 }
 
@@ -46,7 +61,8 @@ type ListCredentialBySchemaRequest struct {
 }
 
 type ListCredentialsResponse struct {
-	Credentials []credential.Container `json:"credentials,omitempty"`
+	Credentials   []credential.Container `json:"credentials,omitempty"`
+	NextPageToken string                 `json:"nextPageToken,omitempty"`
 }
 
 type DeleteCredentialRequest struct {
@@ -69,8 +85,22 @@ type UpdateCredentialStatusRequest struct {
 }
 
 type UpdateCredentialStatusResponse struct {
-	Revoked   bool `json:"revoked" validate:"required"`
-	Suspended bool `json:"suspended" validate:"required"`
+	Status
+}
+
+type Status struct {
+	// ID of the credentials whose status this object represents.
+	ID        string `json:"id,omitempty"`
+	Revoked   bool   `json:"revoked" validate:"required"`
+	Suspended bool   `json:"suspended" validate:"required"`
+}
+
+type BatchUpdateCredentialStatusRequest struct {
+	Requests []UpdateCredentialStatusRequest `json:"requests"`
+}
+
+type BatchUpdateCredentialStatusResponse struct {
+	CredentialStatuses []Status `json:"credentialStatuses"`
 }
 
 type GetCredentialStatusListRequest struct {
@@ -90,4 +120,33 @@ func (csr CreateCredentialRequest) isStatusValid() bool {
 
 func (csr CreateCredentialRequest) hasStatus() bool {
 	return csr.Suspendable || csr.Revocable
+}
+
+func (csr CreateCredentialRequest) hasEvidence() bool {
+	return len(csr.Evidence) != 0
+}
+
+func (csr CreateCredentialRequest) validateEvidence() error {
+	for _, e := range csr.Evidence {
+		evidenceMap, ok := e.(map[string]any)
+		if !ok {
+			return fmt.Errorf("invalid evidence format")
+		}
+
+		_, idExists := evidenceMap["id"]
+		_, typeExists := evidenceMap["type"]
+
+		if !idExists || !typeExists {
+			return fmt.Errorf("evidence missing required 'id' or 'type' field")
+		}
+	}
+
+	return nil
+}
+
+func (csr CreateCredentialRequest) IsValid() error {
+	if err := util.IsValidStruct(csr); err != nil {
+		return err
+	}
+	return common.ValidateVerificationMethodID(csr.FullyQualifiedVerificationMethodID, csr.Issuer)
 }

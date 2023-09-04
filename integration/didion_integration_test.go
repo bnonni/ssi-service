@@ -6,7 +6,6 @@ import (
 	"github.com/TBD54566975/ssi-sdk/crypto"
 	"github.com/TBD54566975/ssi-sdk/did/key"
 	"github.com/stretchr/testify/assert"
-
 	"github.com/tbd54566975/ssi-service/pkg/service/operation/storage"
 )
 
@@ -39,10 +38,50 @@ func TestCreateIssuerDIDIONIntegration(t *testing.T) {
 	assert.Contains(t, issuerDID, "did:ion")
 	SetValue(didIONContext, "issuerDID", issuerDID)
 
-	issuerKID, err := getJSONElement(didIONOutput, "$.did.verificationMethod[0].id")
+	verificationMethodID, err := getJSONElement(didIONOutput, "$.did.verificationMethod[0].id")
 	assert.NoError(t, err)
-	assert.NotEmpty(t, issuerKID)
-	SetValue(didIONContext, "issuerKID", issuerKID)
+	assert.NotEmpty(t, verificationMethodID)
+	SetValue(didIONContext, "verificationMethodID", verificationMethodID)
+
+	// The jwsPublicKeys entry represents the following:
+	//{
+	// "id": "test-id",
+	// "type": "JsonWebKey2020",
+	// "publicKeyJwk": {
+	//   "kty": "OKP",
+	//   "crv": "Ed25519",
+	//   "x": "ghzv2q5WwYO3Y6ZH-MQJvBkd45zbTSyJ6gU1q3yk01E",
+	//   "alg": "EdDSA",
+	//   "kid": "test-kid"
+	// },
+	// "purposes": [
+	//   "authentication"
+	// ]
+	//}
+	verificationMethod2ID, err := getJSONElement(didIONOutput, "$.did.verificationMethod[1].id")
+	assert.NoError(t, err)
+	assert.Equal(t, "#test-id", verificationMethod2ID)
+
+	verificationMethod2KID, err := getJSONElement(didIONOutput, "$.did.verificationMethod[1].publicKeyJwk.kid")
+	assert.NoError(t, err)
+	assert.Equal(t, "test-kid", verificationMethod2KID)
+}
+
+func TestUpdateDIDIONIntegration(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test")
+	}
+	didIONOutput, err := CreateDIDION()
+	assert.NoError(t, err)
+
+	issuerDID, err := getJSONElement(didIONOutput, "$.did.id")
+	assert.NoError(t, err)
+	assert.Contains(t, issuerDID, "did:ion")
+
+	// Because ION nodes do not allow updates immediately after creation of a DID, we expect the following error code.
+	_, err = UpdateDIDION(issuerDID)
+	assert.Error(t, err)
+	assert.ErrorContains(t, err, "queueing_multiple_operations_per_did_not_allowed")
 }
 
 func TestCreateAliceDIDKeyForDIDIONIntegration(t *testing.T) {
@@ -93,19 +132,19 @@ func TestDIDIONCreateVerifiableCredentialIntegration(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NotEmpty(t, issuerDID)
 
-	issuerKID, err := GetValue(didIONContext, "issuerKID")
+	verificationMethodID, err := GetValue(didIONContext, "verificationMethodID")
 	assert.NoError(t, err)
-	assert.NotEmpty(t, issuerKID)
+	assert.NotEmpty(t, verificationMethodID)
 
 	schemaID, err := GetValue(didIONContext, "schemaID")
 	assert.NoError(t, err)
 	assert.NotEmpty(t, schemaID)
 
 	vcOutput, err := CreateVerifiableCredential(credInputParams{
-		IssuerID:  issuerDID.(string),
-		IssuerKID: issuerKID.(string),
-		SchemaID:  schemaID.(string),
-		SubjectID: issuerDID.(string),
+		IssuerID:             issuerDID.(string),
+		VerificationMethodID: verificationMethodID.(string),
+		SchemaID:             schemaID.(string),
+		SubjectID:            issuerDID.(string),
 	})
 	assert.NoError(t, err)
 	assert.NotEmpty(t, vcOutput)
@@ -125,18 +164,18 @@ func TestDIDIONCreateCredentialManifestIntegration(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NotEmpty(t, issuerDID)
 
-	issuerKID, err := GetValue(didIONContext, "issuerKID")
+	verificationMethodID, err := GetValue(didIONContext, "verificationMethodID")
 	assert.NoError(t, err)
-	assert.NotEmpty(t, issuerKID)
+	assert.NotEmpty(t, verificationMethodID)
 
 	schemaID, err := GetValue(didIONContext, "schemaID")
 	assert.NoError(t, err)
 	assert.NotEmpty(t, schemaID)
 
 	cmOutput, err := CreateCredentialManifest(credManifestParams{
-		IssuerID:  issuerDID.(string),
-		IssuerKID: issuerKID.(string),
-		SchemaID:  schemaID.(string),
+		IssuerID:             issuerDID.(string),
+		VerificationMethodID: verificationMethodID.(string),
+		SchemaID:             schemaID.(string),
 	})
 	assert.NoError(t, err)
 

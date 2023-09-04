@@ -1,9 +1,10 @@
 package integration
 
 import (
+	"strings"
 	"testing"
 
-	credsdk "github.com/TBD54566975/ssi-sdk/credential"
+	"github.com/TBD54566975/ssi-sdk/credential/parsing"
 	"github.com/TBD54566975/ssi-sdk/crypto"
 	"github.com/TBD54566975/ssi-sdk/did/key"
 	"github.com/stretchr/testify/assert"
@@ -26,10 +27,10 @@ func TestCreateIssuerDIDKeyIntegration(t *testing.T) {
 	assert.Contains(t, issuerDID, "did:key")
 	SetValue(credentialManifestContext, "issuerDID", issuerDID)
 
-	issuerKID, err := getJSONElement(didKeyOutput, "$.did.verificationMethod[0].id")
+	verificationMethodID, err := getJSONElement(didKeyOutput, "$.did.verificationMethod[0].id")
 	assert.NoError(t, err)
-	assert.NotEmpty(t, issuerKID)
-	SetValue(credentialManifestContext, "issuerKID", issuerKID)
+	assert.NotEmpty(t, verificationMethodID)
+	SetValue(credentialManifestContext, "verificationMethodID", verificationMethodID)
 }
 
 func TestCreateAliceDIDKeyIntegration(t *testing.T) {
@@ -79,19 +80,19 @@ func TestCreateVerifiableCredentialIntegration(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NotEmpty(t, issuerDID)
 
-	issuerKID, err := GetValue(credentialManifestContext, "issuerKID")
+	verificationMethodID, err := GetValue(credentialManifestContext, "verificationMethodID")
 	assert.NoError(t, err)
-	assert.NotEmpty(t, issuerKID)
+	assert.NotEmpty(t, verificationMethodID)
 
 	schemaID, err := GetValue(credentialManifestContext, "schemaID")
 	assert.NoError(t, err)
 	assert.NotEmpty(t, schemaID)
 
 	vcOutput, err := CreateVerifiableCredential(credInputParams{
-		IssuerID:  issuerDID.(string),
-		IssuerKID: issuerKID.(string),
-		SchemaID:  schemaID.(string),
-		SubjectID: issuerDID.(string),
+		IssuerID:             issuerDID.(string),
+		VerificationMethodID: verificationMethodID.(string),
+		SchemaID:             schemaID.(string),
+		SubjectID:            issuerDID.(string),
 	})
 	assert.NoError(t, err)
 	assert.NotEmpty(t, vcOutput)
@@ -100,6 +101,127 @@ func TestCreateVerifiableCredentialIntegration(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NotEmpty(t, credentialJWT)
 	SetValue(credentialManifestContext, "credentialJWT", credentialJWT)
+}
+
+func TestBatchCreateCredentialsIntegration(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test")
+	}
+
+	issuerDID, err := GetValue(credentialManifestContext, "issuerDID")
+	assert.NoError(t, err)
+	assert.NotEmpty(t, issuerDID)
+
+	verificationMethodID, err := GetValue(credentialManifestContext, "verificationMethodID")
+	assert.NoError(t, err)
+	assert.NotEmpty(t, verificationMethodID)
+
+	schemaID, err := GetValue(credentialManifestContext, "schemaID")
+	assert.NoError(t, err)
+	assert.NotEmpty(t, schemaID)
+
+	vcsOutput, err := BatchCreateVerifiableCredentials(batchCredInputParams{
+		IssuerID:             issuerDID.(string),
+		VerificationMethodID: verificationMethodID.(string),
+		SchemaID:             schemaID.(string),
+		SubjectID0:           issuerDID.(string),
+		SubjectID1:           issuerDID.(string),
+		Suspendable0:         true,
+		Revocable1:           true,
+	})
+	assert.NoError(t, err)
+	assert.NotEmpty(t, vcsOutput)
+
+	credentialJWT, err := getJSONElement(vcsOutput, "$.credentials[0].credentialJwt")
+	assert.NoError(t, err)
+	assert.NotEmpty(t, credentialJWT)
+
+	credentialJWT1, err := getJSONElement(vcsOutput, "$.credentials[1].credentialJwt")
+	assert.NoError(t, err)
+	assert.NotEmpty(t, credentialJWT1)
+
+	credentialID0, err := getJSONElement(vcsOutput, "$.credentials[0].credential.id")
+	assert.NoError(t, err)
+
+	credentialID1, err := getJSONElement(vcsOutput, "$.credentials[1].credential.id")
+	assert.NoError(t, err)
+
+	SetValue(credentialManifestContext, "credentialID0", credentialID0)
+	SetValue(credentialManifestContext, "credentialID1", credentialID1)
+}
+
+func idFromURL(id string) string {
+	lastIdx := strings.LastIndex(id, "/")
+	return id[lastIdx+1:]
+}
+
+func TestBatchUpdateCredentialStatusIntegration(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test")
+	}
+
+	fullCredentialID0, err := GetValue(credentialManifestContext, "credentialID0")
+	assert.NoError(t, err)
+	assert.NotEmpty(t, fullCredentialID0)
+
+	fullCredentialID1, err := GetValue(credentialManifestContext, "credentialID1")
+	assert.NoError(t, err)
+	assert.NotEmpty(t, fullCredentialID1)
+
+	credentialID0 := idFromURL(fullCredentialID0.(string))
+	credentialID1 := idFromURL(fullCredentialID1.(string))
+	updatesOutput, err := BatchUpdateVerifiableCredentialStatuses(batchUpdateStatusInputParams{
+		CredentialID0: credentialID0,
+		Suspended0:    true,
+		CredentialID1: credentialID1,
+		Revoked1:      true,
+	})
+	assert.NoError(t, err)
+	assert.NotEmpty(t, updatesOutput)
+
+	id0, err := getJSONElement(updatesOutput, "$.credentialStatuses[0].id")
+	assert.NoError(t, err)
+	assert.Equal(t, credentialID0, id0)
+
+	sus, err := getJSONElement(updatesOutput, "$.credentialStatuses[0].suspended")
+	assert.NoError(t, err)
+	assert.Equal(t, "true", sus)
+
+	id1, err := getJSONElement(updatesOutput, "$.credentialStatuses[1].id")
+	assert.NoError(t, err)
+	assert.Equal(t, credentialID1, id1)
+
+	rev, err := getJSONElement(updatesOutput, "$.credentialStatuses[1].revoked")
+	assert.NoError(t, err)
+	assert.Equal(t, "true", rev)
+}
+
+func TestBatchCreate100CredentialsIntegration(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test")
+	}
+
+	issuerDID, err := GetValue(credentialManifestContext, "issuerDID")
+	assert.NoError(t, err)
+	assert.NotEmpty(t, issuerDID)
+
+	verificationMethodID, err := GetValue(credentialManifestContext, "verificationMethodID")
+	assert.NoError(t, err)
+	assert.NotEmpty(t, verificationMethodID)
+
+	schemaID, err := GetValue(credentialManifestContext, "schemaID")
+	assert.NoError(t, err)
+	assert.NotEmpty(t, schemaID)
+
+	// This test is simply about making sure we can create the maximum configured by default.
+	vcsOutput, err := BatchCreate100VerifiableCredentials(credInputParams{
+		IssuerID:             issuerDID.(string),
+		VerificationMethodID: verificationMethodID.(string),
+		SchemaID:             schemaID.(string),
+		SubjectID:            issuerDID.(string),
+	})
+	assert.NoError(t, err)
+	assert.NotEmpty(t, vcsOutput)
 }
 
 func TestCreateCredentialManifestIntegration(t *testing.T) {
@@ -111,18 +233,18 @@ func TestCreateCredentialManifestIntegration(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NotEmpty(t, issuerDID)
 
-	issuerKID, err := GetValue(credentialManifestContext, "issuerKID")
+	verificationMethodID, err := GetValue(credentialManifestContext, "verificationMethodID")
 	assert.NoError(t, err)
-	assert.NotEmpty(t, issuerKID)
+	assert.NotEmpty(t, verificationMethodID)
 
 	schemaID, err := GetValue(credentialManifestContext, "schemaID")
 	assert.NoError(t, err)
 	assert.NotEmpty(t, schemaID)
 
 	cmOutput, err := CreateCredentialManifest(credManifestParams{
-		IssuerID:  issuerDID.(string),
-		IssuerKID: issuerKID.(string),
-		SchemaID:  schemaID.(string),
+		IssuerID:             issuerDID.(string),
+		VerificationMethodID: verificationMethodID.(string),
+		SchemaID:             schemaID.(string),
 	})
 	assert.NoError(t, err)
 
@@ -146,18 +268,18 @@ func TestCreateIssuanceTemplateIntegration(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NotEmpty(t, issuerDID)
 
-	issuerKID, err := GetValue(credentialManifestContext, "issuerKID")
+	verificationMethodID, err := GetValue(credentialManifestContext, "verificationMethodID")
 	assert.NoError(t, err)
-	assert.NotEmpty(t, issuerKID)
+	assert.NotEmpty(t, verificationMethodID)
 
 	schemaID, err := GetValue(credentialManifestContext, "schemaID")
 	assert.NoError(t, err)
 	assert.NotEmpty(t, schemaID)
 
 	cmOutput, err := CreateCredentialManifest(credManifestParams{
-		IssuerID:  issuerDID.(string),
-		IssuerKID: issuerKID.(string),
-		SchemaID:  schemaID.(string),
+		IssuerID:             issuerDID.(string),
+		VerificationMethodID: verificationMethodID.(string),
+		SchemaID:             schemaID.(string),
 	})
 	assert.NoError(t, err)
 
@@ -172,10 +294,10 @@ func TestCreateIssuanceTemplateIntegration(t *testing.T) {
 	SetValue(credentialManifestContext, "presentationDefinitionWithIssuanceTemplateID", presentationDefinitionID)
 
 	itOutput, err := CreateIssuanceTemplate(issuanceTemplateParams{
-		SchemaID:   schemaID.(string),
-		ManifestID: manifestID,
-		IssuerID:   issuerDID.(string),
-		IssuerKID:  issuerKID.(string),
+		SchemaID:             schemaID.(string),
+		ManifestID:           manifestID,
+		IssuerID:             issuerDID.(string),
+		VerificationMethodID: verificationMethodID.(string),
 	})
 	assert.NoError(t, err)
 
@@ -304,7 +426,7 @@ func TestSubmitAndReviewApplicationIntegration(t *testing.T) {
 	vc, err := getJSONElement(reviewApplicationOutput, "$.verifiableCredentials[0]")
 	assert.NoError(t, err)
 	assert.NotEmpty(t, vc)
-	_, _, typedVC, err := credsdk.ToCredential(vc)
+	_, _, typedVC, err := parsing.ToCredential(vc)
 	assert.NoError(t, err)
 	assert.Equal(t, "Mister", typedVC.CredentialSubject["givenName"])
 	assert.Equal(t, "Tee", typedVC.CredentialSubject["familyName"])

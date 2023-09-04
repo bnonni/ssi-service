@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/TBD54566975/ssi-sdk/credential/exchange"
 	"github.com/TBD54566975/ssi-sdk/credential/manifest"
+	"github.com/TBD54566975/ssi-sdk/did"
 	"github.com/TBD54566975/ssi-sdk/did/resolution"
 	errresp "github.com/TBD54566975/ssi-sdk/error"
 	sdkutil "github.com/TBD54566975/ssi-sdk/util"
@@ -13,7 +15,6 @@ import (
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 
-	"github.com/tbd54566975/ssi-service/config"
 	credint "github.com/tbd54566975/ssi-service/internal/credential"
 	"github.com/tbd54566975/ssi-service/internal/keyaccess"
 	"github.com/tbd54566975/ssi-service/pkg/service/common"
@@ -26,6 +27,8 @@ import (
 	"github.com/tbd54566975/ssi-service/pkg/service/operation"
 	opcredential "github.com/tbd54566975/ssi-service/pkg/service/operation/credential"
 	opstorage "github.com/tbd54566975/ssi-service/pkg/service/operation/storage"
+	"github.com/tbd54566975/ssi-service/pkg/service/presentation"
+	presmodel "github.com/tbd54566975/ssi-service/pkg/service/presentation/model"
 	"github.com/tbd54566975/ssi-service/pkg/storage"
 )
 
@@ -35,12 +38,12 @@ type Service struct {
 	storage                 *manifeststg.Storage
 	opsStorage              *operation.Storage
 	issuanceTemplateStorage *issuance.Storage
-	config                  config.ManifestServiceConfig
 
 	// external dependencies
-	keyStore    *keystore.Service
-	didResolver resolution.Resolver
-	credential  *credential.Service
+	keyStore        *keystore.Service
+	presentationSvc *presentation.Service
+	didResolver     resolution.Resolver
+	credential      *credential.Service
 
 	Clock      clock.Clock
 	reqStorage common.RequestStorage
@@ -73,12 +76,7 @@ func (s Service) Status() framework.Status {
 	return framework.Status{Status: framework.StatusReady}
 }
 
-func (s Service) Config() config.ManifestServiceConfig {
-	return s.config
-}
-
-func NewManifestService(config config.ManifestServiceConfig, s storage.ServiceStorage, keyStore *keystore.Service,
-	didResolver resolution.Resolver, credential *credential.Service) (*Service, error) {
+func NewManifestService(s storage.ServiceStorage, keyStore *keystore.Service, didResolver resolution.Resolver, credential *credential.Service, presentationSvc *presentation.Service) (*Service, error) {
 	manifestStorage, err := manifeststg.NewManifestStorage(s)
 	if err != nil {
 		return nil, sdkutil.LoggingErrorMsg(err, "could not instantiate storage for the manifest service")
@@ -96,12 +94,12 @@ func NewManifestService(config config.ManifestServiceConfig, s storage.ServiceSt
 		storage:                 manifestStorage,
 		opsStorage:              opsStorage,
 		issuanceTemplateStorage: issuanceStorage,
-		config:                  config,
 		keyStore:                keyStore,
 		didResolver:             didResolver,
 		credential:              credential,
 		Clock:                   clock.New(),
 		reqStorage:              requestStorage,
+		presentationSvc:         presentationSvc,
 	}, nil
 }
 
@@ -114,8 +112,8 @@ func (s Service) CreateManifest(ctx context.Context, request model.CreateManifes
 	logrus.Debugf("creating manifest: %+v", request)
 
 	// validate the request
-	if err := sdkutil.IsValidStruct(request); err != nil {
-		return nil, sdkutil.LoggingErrorMsgf(err, "invalid create manifest request: %s", err.Error())
+	if err := request.IsValid(); err != nil {
+		return nil, sdkutil.LoggingErrorMsg(err, "invalid create manifest request")
 	}
 
 	// compose a valid manifest
@@ -156,12 +154,29 @@ func (s Service) CreateManifest(ctx context.Context, request model.CreateManifes
 			request.OutputDescriptors,
 		)
 	}
-	if request.PresentationDefinition != nil {
-		if err := builder.SetPresentationDefinition(*request.PresentationDefinition); err != nil {
+	if request.PresentationDefinitionRef != nil {
+		var pd *exchange.PresentationDefinition
+		if request.PresentationDefinitionRef.ID != nil && request.PresentationDefinitionRef.PresentationDefinition != nil {
+			return nil, errors.New(`only one of "id" and "value" can be provided`)
+		}
+
+		if request.PresentationDefinitionRef.ID != nil {
+			resp, err := s.presentationSvc.GetPresentationDefinition(ctx, presmodel.GetPresentationDefinitionRequest{ID: *request.PresentationDefinitionRef.ID})
+			if err != nil {
+				return nil, errors.Wrap(err, "getting presentation definition")
+			}
+			pd = &resp.PresentationDefinition
+		}
+
+		if request.PresentationDefinitionRef.PresentationDefinition != nil {
+			pd = request.PresentationDefinitionRef.PresentationDefinition
+		}
+
+		if err := builder.SetPresentationDefinition(*pd); err != nil {
 			return nil, sdkutil.LoggingErrorMsgf(
 				err,
 				"could not set presentation definition<%+v> for manifest",
-				request.PresentationDefinition,
+				request.PresentationDefinitionRef,
 			)
 		}
 	}
@@ -174,10 +189,10 @@ func (s Service) CreateManifest(ctx context.Context, request model.CreateManifes
 
 	// store the manifest
 	storageRequest := manifeststg.StoredManifest{
-		ID:        m.ID,
-		IssuerDID: m.Issuer.ID,
-		IssuerKID: request.IssuerKID,
-		Manifest:  *m,
+		ID:                                 m.ID,
+		IssuerDID:                          m.Issuer.ID,
+		FullyQualifiedVerificationMethodID: request.FullyQualifiedVerificationMethodID,
+		Manifest:                           *m,
 	}
 
 	if err = s.storage.StoreManifest(ctx, storageRequest); err != nil {
@@ -346,13 +361,14 @@ func (s Service) attemptAutomaticIssuance(ctx context.Context, request model.Sub
 		logrus.Warnf("found issuance issuance templates for manifest<%s>, using first entry only", manifestID)
 	}
 
-	credResp, creds, err := s.buildFulfillmentCredentialResponseFromTemplate(ctx, applicantDID, manifestID, gotManifest.IssuerKID,
+	credResp, creds, err := s.buildFulfillmentCredentialResponseFromTemplate(ctx, applicantDID, manifestID, gotManifest.FullyQualifiedVerificationMethodID,
 		gotManifest.Manifest, issuanceTemplate, request.Application, request.ApplicationJSON)
 	if err != nil {
 		return nil, err
 	}
 
-	responseJWT, err := s.signCredentialResponse(ctx, gotManifest.IssuerKID, CredentialResponseContainer{
+	keyStoreID := did.FullyQualifiedVerificationMethodID(gotManifest.IssuerDID, gotManifest.FullyQualifiedVerificationMethodID)
+	responseJWT, err := s.signCredentialResponse(ctx, keyStoreID, CredentialResponseContainer{
 		Response:    *credResp,
 		Credentials: credint.ContainersToInterface(creds),
 	})
@@ -400,7 +416,7 @@ func (s Service) ReviewApplication(ctx context.Context, request model.ReviewAppl
 	var credentials []credint.Container
 	if request.Approved {
 		// build the credential response
-		approvalResponse, creds, err := s.buildFulfillmentCredentialResponse(ctx, applicantDID, applicationID, manifestID, gotManifest.IssuerKID, credManifest, request.CredentialOverrides)
+		approvalResponse, creds, err := s.buildFulfillmentCredentialResponse(ctx, applicantDID, applicationID, manifestID, gotManifest.FullyQualifiedVerificationMethodID, credManifest, request.CredentialOverrides)
 		if err != nil {
 			return nil, sdkutil.LoggingErrorMsg(err, "building credential response")
 		}
@@ -421,7 +437,8 @@ func (s Service) ReviewApplication(ctx context.Context, request model.ReviewAppl
 	}
 
 	// sign the response before returning
-	responseJWT, err := s.signCredentialResponse(ctx, gotManifest.IssuerKID, responseContainer)
+	keyStoreID := did.FullyQualifiedVerificationMethodID(gotManifest.IssuerDID, gotManifest.FullyQualifiedVerificationMethodID)
+	responseJWT, err := s.signCredentialResponse(ctx, keyStoreID, responseContainer)
 	if err != nil {
 		return nil, sdkutil.LoggingErrorMsg(err, "could not sign credential response")
 	}

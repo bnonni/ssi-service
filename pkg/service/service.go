@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	sdkutil "github.com/TBD54566975/ssi-sdk/util"
+	"github.com/pkg/errors"
 
 	"github.com/tbd54566975/ssi-service/config"
 	"github.com/tbd54566975/ssi-service/pkg/service/credential"
@@ -16,21 +17,24 @@ import (
 	"github.com/tbd54566975/ssi-service/pkg/service/presentation"
 	"github.com/tbd54566975/ssi-service/pkg/service/schema"
 	"github.com/tbd54566975/ssi-service/pkg/service/webhook"
+	wellknown "github.com/tbd54566975/ssi-service/pkg/service/well-known"
 	"github.com/tbd54566975/ssi-service/pkg/storage"
 )
 
 // SSIService represents all services and their dependencies independent of transport
 type SSIService struct {
-	KeyStore     *keystore.Service
-	DID          *did.Service
-	Schema       *schema.Service
-	Issuance     *issuance.Service
-	Credential   *credential.Service
-	Manifest     *manifest.Service
-	Presentation *presentation.Service
-	Operation    *operation.Service
-	Webhook      *webhook.Service
-	storage      storage.ServiceStorage
+	KeyStore         *keystore.Service
+	DID              *did.Service
+	Schema           *schema.Service
+	Issuance         *issuance.Service
+	Credential       *credential.Service
+	Manifest         *manifest.Service
+	Presentation     *presentation.Service
+	Operation        *operation.Service
+	Webhook          *webhook.Service
+	storage          storage.ServiceStorage
+	BatchDID         *did.BatchService
+	DIDConfiguration *wellknown.DIDConfigurationService
 }
 
 // InstantiateSSIService creates a new instance of the SSIS which instantiates all services and their
@@ -56,21 +60,6 @@ func validateServiceConfig(config config.ServicesConfig) error {
 	if config.DIDConfig.IsEmpty() {
 		return fmt.Errorf("%s no config provided", framework.DID)
 	}
-	if config.IssuanceServiceConfig.IsEmpty() {
-		return fmt.Errorf("%s no config provided", framework.Issuance)
-	}
-	if config.SchemaConfig.IsEmpty() {
-		return fmt.Errorf("%s no config provided", framework.Schema)
-	}
-	if config.CredentialConfig.IsEmpty() {
-		return fmt.Errorf("%s no config provided", framework.Credential)
-	}
-	if config.ManifestConfig.IsEmpty() {
-		return fmt.Errorf("%s no config provided", framework.Manifest)
-	}
-	if config.PresentationConfig.IsEmpty() {
-		return fmt.Errorf("%s no config provided", framework.Presentation)
-	}
 	if config.WebhookConfig.IsEmpty() {
 		return fmt.Errorf("%s no config provided", framework.Webhook)
 	}
@@ -79,9 +68,18 @@ func validateServiceConfig(config config.ServicesConfig) error {
 
 // instantiateServices begins all instantiates and their dependencies
 func instantiateServices(config config.ServicesConfig) (*SSIService, error) {
-	storageProvider, err := storage.NewStorage(storage.Type(config.StorageProvider), config.StorageOptions...)
+	unencryptedStorageProvider, err := storage.NewStorage(storage.Type(config.StorageProvider), config.StorageOptions...)
 	if err != nil {
 		return nil, sdkutil.LoggingErrorMsgf(err, "could not instantiate storage provider: %s", config.StorageProvider)
+	}
+
+	storageEncrypter, storageDecrypter, err := keystore.NewServiceEncryption(unencryptedStorageProvider, config.AppLevelEncryptionConfiguration, keystore.ServiceDataEncryptionKey)
+	if err != nil {
+		return nil, errors.Wrap(err, "creating app level encrypter")
+	}
+	storageProvider := unencryptedStorageProvider
+	if storageEncrypter != nil && storageDecrypter != nil {
+		storageProvider = storage.NewEncryptedWrapper(unencryptedStorageProvider, storageEncrypter, storageDecrypter)
 	}
 
 	webhookService, err := webhook.NewWebhookService(config.WebhookConfig, storageProvider)
@@ -89,23 +87,37 @@ func instantiateServices(config config.ServicesConfig) (*SSIService, error) {
 		return nil, sdkutil.LoggingErrorMsg(err, "could not instantiate the webhook service")
 	}
 
-	keyStoreService, err := keystore.NewKeyStoreService(config.KeyStoreConfig, storageProvider)
+	keyEncrypter, keyDecrypter, err := keystore.NewServiceEncryption(unencryptedStorageProvider, config.KeyStoreConfig.EncryptionConfig, keystore.ServiceKeyEncryptionKey)
+	if err != nil {
+		return nil, errors.Wrap(err, "creating keystore encrypter")
+	}
+	keyStoreServiceFactory := keystore.NewKeyStoreServiceFactory(config.KeyStoreConfig, storageProvider, keyEncrypter, keyDecrypter)
+	if err != nil {
+		return nil, sdkutil.LoggingErrorMsg(err, "could not instantiate the keystore service factory")
+	}
+
+	keyStoreService, err := keyStoreServiceFactory(storageProvider)
 	if err != nil {
 		return nil, sdkutil.LoggingErrorMsg(err, "could not instantiate KeyStore service")
 	}
 
-	didService, err := did.NewDIDService(config.DIDConfig, storageProvider, keyStoreService)
+	batchDIDService, err := did.NewBatchDIDService(config.DIDConfig, storageProvider, keyStoreServiceFactory)
+	if err != nil {
+		return nil, sdkutil.LoggingErrorMsg(err, "could not instantiate batch DID service")
+	}
+
+	didService, err := did.NewDIDService(config.DIDConfig, storageProvider, keyStoreService, keyStoreServiceFactory)
 	if err != nil {
 		return nil, sdkutil.LoggingErrorMsg(err, "could not instantiate the DID service")
 	}
 	didResolver := didService.GetResolver()
 
-	schemaService, err := schema.NewSchemaService(config.SchemaConfig, storageProvider, keyStoreService, didResolver)
+	schemaService, err := schema.NewSchemaService(storageProvider, keyStoreService, didResolver)
 	if err != nil {
 		return nil, sdkutil.LoggingErrorMsg(err, "could not instantiate the schema service")
 	}
 
-	issuanceService, err := issuance.NewIssuanceService(config.IssuanceServiceConfig, storageProvider)
+	issuanceService, err := issuance.NewIssuanceService(storageProvider)
 	if err != nil {
 		return nil, sdkutil.LoggingErrorMsg(err, "could not instantiate the issuance service")
 	}
@@ -115,14 +127,14 @@ func instantiateServices(config config.ServicesConfig) (*SSIService, error) {
 		return nil, sdkutil.LoggingErrorMsg(err, "could not instantiate the credential service")
 	}
 
-	manifestService, err := manifest.NewManifestService(config.ManifestConfig, storageProvider, keyStoreService, didResolver, credentialService)
-	if err != nil {
-		return nil, sdkutil.LoggingErrorMsg(err, "could not instantiate the manifest service")
-	}
-
-	presentationService, err := presentation.NewPresentationService(config.PresentationConfig, storageProvider, didResolver, schemaService, keyStoreService)
+	presentationService, err := presentation.NewPresentationService(storageProvider, didResolver, schemaService, keyStoreService)
 	if err != nil {
 		return nil, sdkutil.LoggingErrorMsg(err, "could not instantiate the presentation service")
+	}
+
+	manifestService, err := manifest.NewManifestService(storageProvider, keyStoreService, didResolver, credentialService, presentationService)
+	if err != nil {
+		return nil, sdkutil.LoggingErrorMsg(err, "could not instantiate the manifest service")
 	}
 
 	operationService, err := operation.NewOperationService(storageProvider)
@@ -130,17 +142,20 @@ func instantiateServices(config config.ServicesConfig) (*SSIService, error) {
 		return nil, sdkutil.LoggingErrorMsg(err, "could not instantiate the operation service")
 	}
 
+	didConfigurationService, _ := wellknown.NewDIDConfigurationService(keyStoreService, didResolver, schemaService)
 	return &SSIService{
-		KeyStore:     keyStoreService,
-		DID:          didService,
-		Schema:       schemaService,
-		Issuance:     issuanceService,
-		Credential:   credentialService,
-		Manifest:     manifestService,
-		Presentation: presentationService,
-		Operation:    operationService,
-		Webhook:      webhookService,
-		storage:      storageProvider,
+		KeyStore:         keyStoreService,
+		DID:              didService,
+		BatchDID:         batchDIDService,
+		Schema:           schemaService,
+		Issuance:         issuanceService,
+		Credential:       credentialService,
+		Manifest:         manifestService,
+		Presentation:     presentationService,
+		Operation:        operationService,
+		Webhook:          webhookService,
+		DIDConfiguration: didConfigurationService,
+		storage:          storageProvider,
 	}, nil
 }
 

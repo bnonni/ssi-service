@@ -3,13 +3,14 @@ package schema
 import (
 	"context"
 
+	"github.com/TBD54566975/ssi-sdk/credential/schema"
 	"github.com/TBD54566975/ssi-sdk/util"
 	"github.com/goccy/go-json"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
+	"github.com/tbd54566975/ssi-service/pkg/service/common"
 
-	"github.com/TBD54566975/ssi-sdk/credential/schema"
-
+	"github.com/tbd54566975/ssi-service/internal/keyaccess"
 	"github.com/tbd54566975/ssi-service/pkg/storage"
 )
 
@@ -17,9 +18,16 @@ const (
 	namespace = "schema"
 )
 
+type StoredSchemas struct {
+	Schemas       []StoredSchema
+	NextPageToken string
+}
+
 type StoredSchema struct {
-	ID     string            `json:"id"`
-	Schema schema.JSONSchema `json:"schema"`
+	ID               string                  `json:"id"`
+	Type             schema.VCJSONSchemaType `json:"type"`
+	Schema           *schema.JSONSchema      `json:"schema,omitempty"`
+	CredentialSchema *keyaccess.JWT          `json:"credentialSchema,omitempty"`
 }
 
 type Storage struct {
@@ -33,7 +41,7 @@ func NewSchemaStorage(db storage.ServiceStorage) (*Storage, error) {
 	return &Storage{db: db}, nil
 }
 
-func (ss *Storage) StoreSchema(ctx context.Context, schema StoredSchema) error {
+func (s *Storage) StoreSchema(ctx context.Context, schema StoredSchema) error {
 	id := schema.ID
 	if id == "" {
 		return util.LoggingNewError("could not store schema without an ID")
@@ -42,11 +50,11 @@ func (ss *Storage) StoreSchema(ctx context.Context, schema StoredSchema) error {
 	if err != nil {
 		return util.LoggingErrorMsgf(err, "could not store schema: %s", id)
 	}
-	return ss.db.Write(ctx, namespace, id, schemaBytes)
+	return s.db.Write(ctx, namespace, id, schemaBytes)
 }
 
-func (ss *Storage) GetSchema(ctx context.Context, id string) (*StoredSchema, error) {
-	schemaBytes, err := ss.db.Read(ctx, namespace, id)
+func (s *Storage) GetSchema(ctx context.Context, id string) (*StoredSchema, error) {
+	schemaBytes, err := s.db.Read(ctx, namespace, id)
 	if err != nil {
 		return nil, util.LoggingErrorMsgf(err, "could not get schema: %s", id)
 	}
@@ -61,15 +69,13 @@ func (ss *Storage) GetSchema(ctx context.Context, id string) (*StoredSchema, err
 }
 
 // ListSchemas attempts to get all stored schemas. It will return those it can even if it has trouble with some.
-func (ss *Storage) ListSchemas(ctx context.Context) ([]StoredSchema, error) {
-	gotSchemas, err := ss.db.ReadAll(ctx, namespace)
+func (s *Storage) ListSchemas(ctx context.Context, page common.Page) (*StoredSchemas, error) {
+	token, size := page.ToStorageArgs()
+	gotSchemas, nextPageToken, err := s.db.ReadPage(ctx, namespace, token, size)
 	if err != nil {
-		return nil, util.LoggingErrorMsg(err, "could not list schemas")
+		return nil, errors.Wrap(err, "reading page of schemas")
 	}
-	if len(gotSchemas) == 0 {
-		logrus.Info("no schemas to list")
-		return nil, nil
-	}
+
 	stored := make([]StoredSchema, 0, len(gotSchemas))
 	for _, schemaBytes := range gotSchemas {
 		var nextSchema StoredSchema
@@ -79,11 +85,14 @@ func (ss *Storage) ListSchemas(ctx context.Context) ([]StoredSchema, error) {
 		}
 		stored = append(stored, nextSchema)
 	}
-	return stored, nil
+	return &StoredSchemas{
+		Schemas:       stored,
+		NextPageToken: nextPageToken,
+	}, nil
 }
 
-func (ss *Storage) DeleteSchema(ctx context.Context, id string) error {
-	if err := ss.db.Delete(ctx, namespace, id); err != nil {
+func (s *Storage) DeleteSchema(ctx context.Context, id string) error {
+	if err := s.db.Delete(ctx, namespace, id); err != nil {
 		return util.LoggingErrorMsgf(err, "could not delete schema: %s", id)
 	}
 	return nil
