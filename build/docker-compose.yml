@@ -8,7 +8,7 @@ services:
       context: ../
       dockerfile: build/Dockerfile
     ports:
-      - "8080:3000"
+      - "8081:3000"
     environment:
       - CONFIG_PATH=/app/config/test.toml
       - JAEGER_HTTP_URL=http://jaeger:14268/api/traces
@@ -36,11 +36,13 @@ services:
     environment:
       - ALLOW_EMPTY_PASSWORD=yes
     # This allows for data to not be persisted on new runs
-    command: [sh, -c, "rm -f /data/dump.rdb && redis-server --save ''"]
+    command: [sh, -c, "redis-server --save ''"]
     ports:
       - "6379:6379"
     networks:
       - ssi_network
+    volumes:
+      - ./data:/data
   redis-commander:
     container_name: redis-commander
     hostname: redis-commander
